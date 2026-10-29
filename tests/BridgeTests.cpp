@@ -239,6 +239,31 @@ TEST(velocity_drag_gesture_is_one_undo_step)
     CHECK(typeOf(cmd(b, "{\"version\":1,\"type\":\"setStepVelocity\",\"track\":1,\"step\":0,\"velocity\":5,\"gesture\":-1}")) == "error");
 }
 
+TEST(slider_gestures_coalesce_for_step_and_track_edits)
+{
+    Model m = makeDefaultModel(); Bridge b(m);
+    for (int v = 1; v <= 30; ++v) {
+        cmd(b, "{\"version\":1,\"type\":\"modifyTrack\",\"track\":1,\"gesture\":4,\"props\":{\"swing\":" + std::to_string(v) + "}}");
+        cmd(b, "{\"version\":1,\"type\":\"modifyStep\",\"track\":2,\"step\":4,\"gesture\":5,\"props\":{\"probability\":" + std::to_string(100 - v) + "}}");
+    }
+    // interleaved targets with distinct gesture ids are still separate runs: each interleave breaks the run
+    CHECK_EQ(m.pattern.tracks[0].swing, 30); CHECK_EQ(m.pattern.tracks[1].steps[4].probability, 70);
+    Model m2 = makeDefaultModel(); Bridge b2(m2);
+    for (int v = 1; v <= 30; ++v) cmd(b2, "{\"version\":1,\"type\":\"modifyTrack\",\"track\":1,\"gesture\":4,\"props\":{\"swing\":" + std::to_string(v) + "}}");
+    for (int v = 1; v <= 30; ++v) cmd(b2, "{\"version\":1,\"type\":\"modifyStep\",\"track\":2,\"step\":4,\"gesture\":5,\"props\":{\"ratchets\":" + std::to_string(1 + v % 8) + "}}");
+    cmd(b2, "{\"version\":1,\"type\":\"undo\"}");
+    CHECK_EQ(m2.pattern.tracks[1].steps[4].ratchets, 1);   // whole ratchet drag reverted
+    CHECK_EQ(m2.pattern.tracks[0].swing, 30);
+    cmd(b2, "{\"version\":1,\"type\":\"undo\"}");
+    CHECK_EQ(m2.pattern.tracks[0].swing, 0);               // whole swing drag reverted
+    CHECK(!m2.history.canUndo());
+    // no gesture id: every command is its own step
+    cmd(b2, "{\"version\":1,\"type\":\"modifyTrack\",\"track\":1,\"props\":{\"phase\":1}}");
+    cmd(b2, "{\"version\":1,\"type\":\"modifyTrack\",\"track\":1,\"props\":{\"phase\":2}}");
+    cmd(b2, "{\"version\":1,\"type\":\"undo\"}");
+    CHECK_EQ(m2.pattern.tracks[0].phase, 1);
+}
+
 TEST(settings_and_failed_commands_do_not_touch_history)
 {
     Model m = makeDefaultModel(); Bridge b(m);

@@ -22,6 +22,10 @@ export function send(cmd: Body<Command>): void {
   window.setState?.('cmd', JSON.stringify(msg));
 }
 
+// Ids that tag a continuous edit (slider drag, cell drag) so the native side records one undo step for it.
+let gestureSeq = 0;
+export const nextGesture = (): number => ++gestureSeq;
+
 function decode(b64: string): unknown {
   const bin = atob(b64);
   const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));

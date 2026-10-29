@@ -37,6 +37,18 @@ bool readStepRef(const json& cmd, int& out, std::string& err)
     return true;
 }
 
+// Optional "gesture" id: consecutive commands of the same kind on the same target with the same non-zero id
+// are recorded as one undo step (a slider drag, a drag over a cell).
+bool readGesture(const json& cmd, uint64_t tag, uint32_t trackId, int step, uint64_t& key, std::string& err)
+{
+    const auto it = cmd.find("gesture");
+    if (it == cmd.end()) return true;
+    if (!it->is_number_unsigned() || it->get<uint64_t>() > 0xFFFFFFFFull) { err = "gesture: expected a non-negative integer"; return false; }
+    const uint64_t g = it->get<uint64_t>();
+    if (g != 0) key = (1ull << 63) | (g << 24) | (tag << 16) | (static_cast<uint64_t>(trackId & 0xFF) << 8) | static_cast<uint64_t>(step & 0xFF);
+    return true;
+}
+
 json stepEvent(const Track& t, int step)
 {
     json e = event("stepChanged");
@@ -113,12 +125,7 @@ Bridge::Result Bridge::handle(const char* text)
         if (!readTrackRef(cmd, model_, t, err) || !readStepRef(cmd, step, err)) return fail();
         json props = json::object();
         if (cmd.contains("velocity")) props["velocity"] = cmd["velocity"]; else { err = "velocity: required"; return fail(); }
-        const auto git = cmd.find("gesture");
-        if (git != cmd.end()) {
-            if (!git->is_number_unsigned() || git->get<uint64_t>() > 0xFFFFFFFFull) { err = "gesture: expected a non-negative integer"; return fail(); }
-            if (git->get<uint64_t>() != 0)
-                coalesce = (1ull << 63) | (git->get<uint64_t>() << 16) | (static_cast<uint64_t>(t->id & 0xFF) << 8) | static_cast<uint64_t>(step);
-        }
+        if (!readGesture(cmd, 1, t->id, step, coalesce, err)) return fail();
         Step s = t->steps[step];
         if (!readStep(props, s, err)) return fail();
         t->steps[step] = s;
@@ -128,6 +135,7 @@ Bridge::Result Bridge::handle(const char* text)
         if (!readTrackRef(cmd, model_, t, err) || !readStepRef(cmd, step, err)) return fail();
         const auto pit = cmd.find("props");
         if (pit == cmd.end()) { err = "props: required"; return fail(); }
+        if (!readGesture(cmd, 2, t->id, step, coalesce, err)) return fail();
         Step s = t->steps[step];
         if (!readStep(*pit, s, err)) return fail();
         t->steps[step] = s;
@@ -137,6 +145,7 @@ Bridge::Result Bridge::handle(const char* text)
         if (!readTrackRef(cmd, model_, t, err)) return fail();
         const auto pit = cmd.find("props");
         if (pit == cmd.end()) { err = "props: required"; return fail(); }
+        if (!readGesture(cmd, 3, t->id, 0, coalesce, err)) return fail();
         Track copy = *t;
         if (!readTrackProps(*pit, copy, err)) return fail();
         *t = copy;

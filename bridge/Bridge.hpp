@@ -16,7 +16,7 @@ constexpr int kBridgeVersion = 1;
 //   modifyStep {track, step, props}          modifyTrack {track, props}
 //   addTrack {props?}                        removeTrack {track}
 //   setSettings {settings:{anchorMode?, enabled?}}
-//   undo, redo                               (setStepVelocity may carry a non-zero "gesture" id to coalesce a drag)
+//   undo, redo                               (setStepVelocity, modifyStep and modifyTrack may carry a non-zero "gesture" id to coalesce a drag)
 // Events: init, stepChanged, trackChanged, patternChanged, settings, history {canUndo, canRedo}, error
 // (transport and playheads are produced by the UI side from audio-thread telemetry).
 class Bridge {
