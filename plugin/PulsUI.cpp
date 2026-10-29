@@ -69,6 +69,8 @@ protected:
             return;
         bool dirty = false;
 
+        fPlugin->drainTrace();
+
         for (const std::string& ev : fPlugin->drainOutbox())
         {
             dirty = true;
