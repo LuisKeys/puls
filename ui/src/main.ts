@@ -2,6 +2,7 @@ import './styles.css';
 import { onEvent, send } from './bridge';
 import { mountBank } from './bank';
 import { mountGrid } from './grid';
+import { isHelpOpen, toggleHelp } from './help';
 import { applyEvent } from './state';
 import { mountToolbar } from './toolbar';
 
@@ -22,6 +23,13 @@ onEvent(applyEvent);
 
 // Undo/redo shortcuts (only reach us while the WebView has keyboard focus).
 window.addEventListener('keydown', (e) => {
+  const tag = (e.target as HTMLElement).tagName;
+  if (e.key === '?' && tag !== 'INPUT' && tag !== 'SELECT') {
+    toggleHelp();
+    e.preventDefault();
+    return;
+  }
+  if (isHelpOpen()) return;
   if (!(e.metaKey || e.ctrlKey) || e.altKey || (e.target as HTMLElement).tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
   if (k === 'z') send({ type: e.shiftKey ? 'redo' : 'undo' });
