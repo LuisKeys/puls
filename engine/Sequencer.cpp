@@ -142,8 +142,12 @@ void Sequencer::process(const Pattern& pattern, const TransportInfo& tp, uint32_
     eventCount_ = 0;
     switchCommitted_ = false;
 
-    const bool valid = tp.playing && frames > 0 && tp.bpm > 0.0 && tp.sampleRate > 0.0
-                       && std::isfinite(tp.quarterPos) && std::isfinite(tp.bpm) && tp.quarterPos >= 0.0;
+    // Reject hosts that report nonsense: non-finite or absurd values would overflow the int64 unit arithmetic
+    // (1e9 quarters = ~1e18 units, int64 holds 9.2e18) or make the block window degenerate.
+    const bool valid = tp.playing && frames > 0
+                       && std::isfinite(tp.bpm) && tp.bpm > 0.0 && tp.bpm < 1e5
+                       && std::isfinite(tp.sampleRate) && tp.sampleRate >= 1000.0 && tp.sampleRate < 1e7
+                       && std::isfinite(tp.quarterPos) && tp.quarterPos >= 0.0 && tp.quarterPos < 1e9;
     if (!valid) {
         releaseAll();
         playheads_.fill(-1);

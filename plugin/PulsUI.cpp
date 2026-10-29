@@ -62,10 +62,10 @@ protected:
         const bool playing = fPlugin->telPlaying.load(std::memory_order_relaxed);
         const double q = fPlugin->telQuarterPos.load(std::memory_order_relaxed);
         const double bpm = fPlugin->telBpm.load(std::memory_order_relaxed);
-        if (playing != fLastPlaying || q != fLastQ || bpm != fLastBpm)
+        // The page shows play state and tempo only; the position changes every block and would cost a JS call each time.
+        if (playing != fLastPlaying || bpm != fLastBpm)
         {
             fLastPlaying = playing;
-            fLastQ = q;
             fLastBpm = bpm;
             std::snprintf(buf, sizeof(buf),
                           "{\"version\":1,\"type\":\"transport\",\"playing\":%s,\"bpm\":%.3f,\"quarter\":%.4f}",
@@ -101,7 +101,6 @@ private:
     PulsPlugin* fPlugin = nullptr;
     std::chrono::steady_clock::time_point fLastTelemetry{};
     bool   fLastPlaying = false;
-    double fLastQ = -1.0;
     double fLastBpm = -1.0;
     int    fLastCount = -1;
     int    fLastPattern = -1;

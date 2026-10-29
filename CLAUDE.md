@@ -15,3 +15,4 @@ Polyrhythmic CLAP MIDI drum step sequencer (DPF + built-in WebView + TypeScript)
 `scripts/build.sh` — builds UI (Vite → single inlined index.html) then `plugin/` via DPF Makefile → `bin/puls.clap`.
 `scripts/install-mac.sh` copies it to `~/Library/Audio/Plug-Ins/CLAP`. `scripts/validate.sh` runs clap-validator if present.
 build.sh forces the Xcode SDK: the Command Line Tools SDK here is newer than Xcode's linker (tapi "unknown architecture").
+`scripts/sanitize.sh` runs the headless tests under ASan/UBSan/TSan; `scripts/package-mac.sh` signs (ad-hoc) and zips into `dist/`.
