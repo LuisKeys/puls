@@ -16,7 +16,8 @@ std::string clearStep(uint32_t track, int step);   // every step property back t
 nlohmann::json stepProps(const Step& s);           // all properties of a step, as editSteps/modifyStep props
 // cells: [{track, step, props}], up to 1024; applied atomically as one undo step.
 std::string editSteps(const nlohmann::json& cells);
-std::string modifyTrack(uint32_t track, const nlohmann::json& props, uint32_t gesture = 0);
+// preview: play the track's note after setting `note`, even with the ♪ setting off.
+std::string modifyTrack(uint32_t track, const nlohmann::json& props, uint32_t gesture = 0, bool preview = false);
 std::string addTrack();
 std::string removeTrack(uint32_t track);
 std::string setSettings(const Settings& s);

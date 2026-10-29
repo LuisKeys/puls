@@ -2,6 +2,7 @@
 #include "NanoVG.hpp"
 #include "EditorLayout.hpp"
 #include "TextEdit.hpp"
+#include <cmath>
 #include <cstdint>
 
 // Drawing helpers shared by the editor and its popovers. Colors are 0xRRGGBB; geometry is in logical pixels.
@@ -66,6 +67,29 @@ inline void button(NanoVG& vg, const Rect& r, const char* s, bool enabled, bool 
     const Rect t = align == NanoVG::ALIGN_LEFT ? Rect{r.x + 8, r.y, r.w - 16, r.h} : r;
     label(vg, t, s, active ? col::bg : col::text, align, size);
     vg.restore();
+}
+
+// A small piano (three white keys, two black ones) centered in r, for the buttons that open the note keyboard.
+inline void pianoIcon(NanoVG& vg, const Rect& r, uint32_t c)
+{
+    const float w = 15, h = 11, x = std::floor(r.cx() - w * 0.5f) + 0.5f, y = std::floor(r.cy() - h * 0.5f) + 0.5f;
+    vg.beginPath();
+    vg.roundedRect(x, y, w, h, 1.5f);
+    vg.moveTo(x + w / 3, y + h * 0.6f);
+    vg.lineTo(x + w / 3, y + h);
+    vg.moveTo(x + 2 * w / 3, y + h * 0.6f);
+    vg.lineTo(x + 2 * w / 3, y + h);
+    vg.strokeColor(rgb(c));
+    vg.strokeWidth(1.0f);
+    vg.stroke();
+    fillRect(vg, {x + w / 3 - 1.5f, y, 3, h * 0.6f}, c);
+    fillRect(vg, {x + 2 * w / 3 - 1.5f, y, 3, h * 0.6f}, c);
+}
+
+inline void pianoButton(NanoVG& vg, const Rect& r, bool active, bool hot)
+{
+    button(vg, r, "", true, active, hot);
+    pianoIcon(vg, r, active ? col::bg : col::text);
 }
 
 // A floating panel with a soft shadow.

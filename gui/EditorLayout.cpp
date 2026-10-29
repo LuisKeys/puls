@@ -29,7 +29,8 @@ void EditorLayout::update(float w, float h, int tracks, int stepCount, bool conf
     enable = take(40, 4);
     audition = take(28, 8);
     patternName = take(68, 12);
-    trackName = take(90, 6);
+    trackName = take(58, 4);
+    keys = take(28, 6);
     resLabel = take(26, 0);
     resolution = take(64, 12);
     swingLabel = take(40, 0);
@@ -163,7 +164,7 @@ Hit EditorLayout::hitTest(float x, float y, Popup popup) const noexcept
 
     if (y < kToolbarH) {
         const std::pair<const Rect*, Item> items[] = {
-            {&undo, Item::Undo}, {&redo, Item::Redo}, {&enable, Item::Enable}, {&audition, Item::Audition}, {&resolution, Item::Resolution},
+            {&undo, Item::Undo}, {&redo, Item::Redo}, {&enable, Item::Enable}, {&audition, Item::Audition}, {&keys, Item::Keys}, {&resolution, Item::Resolution},
             {&swing, Item::Swing}, {&removeTrack, Item::RemoveTrack}, {&addTrack, Item::AddTrack},
             {&settings, Item::Settings}, {&help, Item::Help},
         };

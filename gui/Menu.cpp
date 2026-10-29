@@ -114,9 +114,20 @@ void Menu::open(const MenuTarget& t, float x, float y, float winW, float winH)
     }
 }
 
-Rect Menu::control(int i) const noexcept { const Rect r = rows_[i]; return {r.x + kLabelW, r.y, r.w - kLabelW, r.h}; }
+Rect Menu::control(int i) const noexcept
+{
+    const Rect r = rows_[i];
+    const float keysW = fields[i].key == FieldKey::TrackNote ? kKeysW + 4 : 0;   // the keyboard button sits on the right
+    return {r.x + kLabelW, r.y, r.w - kLabelW - keysW, r.h};
+}
 Rect Menu::slider(int i) const noexcept { const Rect c = control(i); return {c.x, c.y, c.w - kNumberW - 6, c.h}; }
 Rect Menu::number(int i) const noexcept { const Rect c = control(i); return {c.right() - kNumberW, c.y + 2, kNumberW, c.h - 4}; }
+Rect Menu::keys(int i) const noexcept
+{
+    if (fields[i].key != FieldKey::TrackNote) return {};
+    const Rect r = rows_[i];
+    return {r.right() - kKeysW, r.y + 2, kKeysW, r.h - 4};
+}
 Rect Menu::textBox(int i) const noexcept { const Rect c = control(i); return {c.x, c.y + 2, c.w, c.h - 4}; }
 Rect Menu::prev(int i) const noexcept { const Rect c = control(i); return {c.x, c.y + 2, 22, c.h - 4}; }
 Rect Menu::next(int i) const noexcept { const Rect c = control(i); return {c.x + 100, c.y + 2, 22, c.h - 4}; }
@@ -134,6 +145,7 @@ MenuHit Menu::hitTest(float x, float y) const noexcept
         if (!rows_[i].contains(x, y)) continue;
         switch (fields[i].type) {
             case FieldType::Range:
+                if (keys(i).contains(x, y)) return {MenuPart::Keys, i};
                 if (number(i).contains(x, y)) return {MenuPart::Number, i};
                 if (slider(i).contains(x, y)) return {MenuPart::Slider, i};
                 break;

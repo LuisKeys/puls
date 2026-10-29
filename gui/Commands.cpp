@@ -58,12 +58,13 @@ std::string editSteps(const json& cells)
     return str(c);
 }
 
-std::string modifyTrack(uint32_t track, const json& props, uint32_t gesture)
+std::string modifyTrack(uint32_t track, const json& props, uint32_t gesture, bool preview)
 {
     json c = command("modifyTrack");
     c["track"] = track;
     c["props"] = props;
     if (gesture != 0) c["gesture"] = gesture;
+    if (preview) c["preview"] = true;
     return str(c);
 }
 

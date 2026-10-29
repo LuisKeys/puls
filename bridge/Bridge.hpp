@@ -16,7 +16,7 @@ constexpr size_t kMaxBatchCells = 1024;
 // Commands (all carry "version":1). They act on the selected pattern unless an "index" is given:
 //   hello
 //   toggleStep {track, step}                 setStepVelocity {track, step, velocity}
-//   modifyStep {track, step, props}          modifyTrack {track, props}
+//   modifyStep {track, step, props}          modifyTrack {track, props, preview?}
 //   editSteps {cells:[{track, step, props}]} (up to 1024 cells, atomic, one undo step)
 //   addTrack {props?}                        removeTrack {track}
 //   setSettings {settings:{anchorMode?, enabled?, patternSwitch?, audition?}}
@@ -37,7 +37,9 @@ public:
         bool switchRequested = false;  // the audio thread should switch to `request`
         SwitchRequest request;
         // With settings.audition on: one note per track whose steps a step command switched on (toggleStep,
-        // modifyStep, editSteps), at the velocity of the first such step.
+        // modifyStep, editSteps), at the velocity of the first such step; and the track's note after a
+        // modifyTrack that sets `note` (velocity 100 x the track's scaling); with "preview":true that note plays
+        // even when settings.audition is off (the note keyboard: playing a key is an explicit request).
         std::vector<AuditionNote> auditions;
     };
 

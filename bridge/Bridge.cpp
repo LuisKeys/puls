@@ -201,13 +201,24 @@ Bridge::Result Bridge::handle(const char* text)
         const auto pit = cmd.find("props");
         if (pit == cmd.end()) { err = "props: required"; return fail(); }
         if (!readGesture(cmd, 3, t->id, 0, coalesce, err)) return fail();
+        const auto prit = cmd.find("preview");
+        if (prit != cmd.end() && !prit->is_boolean()) { err = "preview: expected a boolean"; return fail(); }
+        const bool preview = prit != cmd.end() && prit->get<bool>();
         Track copy = *t;
         if (!readTrackProps(*pit, copy, err)) return fail();
+        json after = trackToJson(copy, false);
+        const bool same = after == trackToJson(*t, false);
         *t = copy;
         json e = event("trackChanged");
-        e["track"] = trackToJson(*t, false);
+        e["track"] = std::move(after);
         r.events.push_back(dumpJson(e));
-        r.changed = true;
+        r.changed = !same;
+        undoable = !same;   // e.g. picking the note a track already has: no empty undo step
+        if ((model_.settings.audition || preview) && pit->is_object() && pit->contains("note")) {
+            // Choosing a note previews it, even when it is the current one; `preview` asks for it regardless of the setting.
+            const int vel = std::clamp((100 * t->velocityPct) / 100, 1, 127);
+            r.auditions.push_back(AuditionNote{t->channel, t->note, static_cast<uint8_t>(vel)});
+        }
     } else if (type == "addTrack") {
         Pattern& p = model_.pattern();
         if (p.trackCount >= kMaxTracks) { err = "pattern already has 16 tracks"; return fail(); }

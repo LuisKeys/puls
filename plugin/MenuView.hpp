@@ -11,12 +11,14 @@ bool applyEditKey(puls::gui::TextEdit& edit, uint key);
 // The right-click popovers (step, track, pattern) and their controls. Values are read from the Model on every
 // draw; edits go out as Bridge commands through `send`. Slider drags are coalesced (flushed by idle() and on
 // release) and share one gesture id, so a drag is one undo step. Gesture ids come from the editor's counter so
-// they never collide with the grid's.
+// they never collide with the grid's. The keyboard button next to the MIDI note closes the menu and calls `openKeys`.
 class MenuView {
 public:
     using Send = std::function<void(const std::string&)>;
+    using OpenKeys = std::function<void(uint32_t track)>;
 
-    MenuView(Send send, uint32_t& gestureSeq) : send_(std::move(send)), gestureSeq_(gestureSeq) {}
+    MenuView(Send send, OpenKeys openKeys, uint32_t& gestureSeq)
+        : send_(std::move(send)), openKeys_(std::move(openKeys)), gestureSeq_(gestureSeq) {}
 
     bool isOpen() const noexcept { return menu_.isOpen(); }
     bool dragging() const noexcept { return dragField_ >= 0; }
@@ -52,6 +54,7 @@ private:
     puls::gui::Menu     menu_;
     puls::gui::TextEdit text_;
     Send                send_;
+    OpenKeys            openKeys_;
     uint32_t&           gestureSeq_;
     int                 editField_ = -1;
     int                 dragField_ = -1, dragValue_ = 0;

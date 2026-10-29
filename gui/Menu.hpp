@@ -33,7 +33,7 @@ struct MenuTarget {
     int      pattern = 0;
 };
 
-enum class MenuPart : uint8_t { None, Panel, Slider, Number, Text, Swatch, Prev, Next, Check, Action };
+enum class MenuPart : uint8_t { None, Panel, Slider, Number, Text, Swatch, Prev, Next, Check, Action, Keys };
 
 struct MenuHit {
     MenuPart part = MenuPart::None;
@@ -49,7 +49,7 @@ constexpr size_t kMaxNameBytes = 15;
 class Menu {
 public:
     static constexpr float kColW = 270, kRowH = 24, kColorRowH = 42, kActionRowH = 26, kTitleH = 28;
-    static constexpr float kLabelW = 96, kNumberW = 44, kPad = 10, kSwatch = 16, kSwatchStep = 19;
+    static constexpr float kLabelW = 96, kNumberW = 44, kKeysW = 24, kPad = 10, kSwatch = 16, kSwatchStep = 19;
     static constexpr int   kMaxFields = 16;
 
     void open(const MenuTarget& t, float x, float y, float winW, float winH);
@@ -68,6 +68,7 @@ public:
     Rect control(int i) const noexcept;
     Rect slider(int i) const noexcept;    // Range: the track
     Rect number(int i) const noexcept;    // Range: the value box (click to type)
+    Rect keys(int i) const noexcept;      // MIDI note: opens the note keyboard; empty for other fields
     Rect textBox(int i) const noexcept;   // Text
     Rect swatch(int i, int c) const noexcept;
     Rect prev(int i) const noexcept;      // Select
