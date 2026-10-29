@@ -1,6 +1,8 @@
 #include "DistrhoUI.hpp"
 #include "PulsPlugin.hpp"
+#include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 START_NAMESPACE_DISTRHO
@@ -50,32 +52,57 @@ protected:
         for (const std::string& ev : fPlugin->drainOutbox())
             UI::stateChanged("evt", base64(ev).c_str());
 
-        // Telemetry at idle rate; only send on change.
-        char buf[160];
+        // Telemetry: at most ~30 Hz, and only when something changed. Nothing is sent while the transport is idle.
+        const auto now = std::chrono::steady_clock::now();
+        if (now - fLastTelemetry < std::chrono::milliseconds(33))
+            return;
+        fLastTelemetry = now;
+
+        char buf[192];
         const bool playing = fPlugin->telPlaying.load(std::memory_order_relaxed);
         const double q = fPlugin->telQuarterPos.load(std::memory_order_relaxed);
         const double bpm = fPlugin->telBpm.load(std::memory_order_relaxed);
-        if (playing != fLastPlaying || q != fLastQ)
+        if (playing != fLastPlaying || q != fLastQ || bpm != fLastBpm)
         {
             fLastPlaying = playing;
             fLastQ = q;
+            fLastBpm = bpm;
             std::snprintf(buf, sizeof(buf),
                           "{\"version\":1,\"type\":\"transport\",\"playing\":%s,\"bpm\":%.3f,\"quarter\":%.4f}",
                           playing ? "true" : "false", bpm, q);
             UI::stateChanged("evt", base64(buf).c_str());
         }
+
+        const int count = fPlugin->telTrackCount.load(std::memory_order_relaxed);
+        int8_t heads[puls::kMaxTracks];
+        for (int i = 0; i < puls::kMaxTracks; ++i)
+            heads[i] = fPlugin->telPlayhead[i].load(std::memory_order_relaxed);
+        if (count != fLastCount || std::memcmp(heads, fLastHeads, sizeof(heads)) != 0)
+        {
+            fLastCount = count;
+            std::memcpy(fLastHeads, heads, sizeof(heads));
+            std::string json = "{\"version\":1,\"type\":\"playheads\",\"steps\":[";
+            for (int i = 0; i < count; ++i)
+                json += (i ? "," : "") + std::to_string(heads[i]);
+            json += "]}";
+            UI::stateChanged("evt", base64(json).c_str());
+        }
     }
 
-    void stateChanged(const char* key, const char* value) override
+    void stateChanged(const char*, const char*) override
     {
-        // Persisted state restored by the host: forward to the page as well.
-        UI::stateChanged(key, base64(value).c_str());
+        // Host-restored state is not forwarded: the page asks for the full model with `hello`, and
+        // PulsPlugin::setState queues an `init` event when a restore happens while the UI is open.
     }
 
 private:
     PulsPlugin* fPlugin = nullptr;
+    std::chrono::steady_clock::time_point fLastTelemetry{};
     bool   fLastPlaying = false;
     double fLastQ = -1.0;
+    double fLastBpm = -1.0;
+    int    fLastCount = -1;
+    int8_t fLastHeads[puls::kMaxTracks] = {};
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PulsUI)
 };
 

@@ -1,7 +1,7 @@
 #!/usr/bin/make -f
 NAME = puls
 
-FILES_DSP = PulsPlugin.cpp ../engine/Sequencer.cpp
+FILES_DSP = PulsPlugin.cpp ../engine/Sequencer.cpp ../state/Serialization.cpp ../bridge/Bridge.cpp
 FILES_UI  = PulsUI.cpp
 
 DPF_PATH = ../external/dpf
@@ -16,7 +16,9 @@ include $(DPF_PATH)/Makefile.plugins.mk
 # The DGL static lib is built by a sub-make that must also see USE_WEB_VIEW (else link-time sentinel mismatch).
 export USE_WEB_VIEW
 
-BUILD_CXX_FLAGS += -std=c++20 -I../engine -I.
+BUILD_CXX_FLAGS += -std=c++20 -I../engine -I../model -I../state -I../bridge -I../third_party -I.
+# DPF builds with -ffast-math, which would drop the engine's isfinite() guards and break json.hpp's infinity handling.
+BUILD_CXX_FLAGS += -fno-fast-math
 BUILD_CXX_FLAGS += -Wno-unused-parameter -Wno-deprecated-declarations
 
 TARGETS += clap

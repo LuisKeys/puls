@@ -15,7 +15,9 @@ export function onEvent(fn: Listener): void {
   listeners.push(fn);
 }
 
-export function send(cmd: Omit<Command, 'version'>): void {
+type Body<C> = C extends { version: 1 } ? Omit<C, 'version'> : never;
+
+export function send(cmd: Body<Command>): void {
   const msg = { version: BRIDGE_VERSION, ...cmd } as Command;
   window.setState?.('cmd', JSON.stringify(msg));
 }
@@ -26,16 +28,12 @@ function decode(b64: string): unknown {
   return JSON.parse(new TextDecoder().decode(bytes));
 }
 
+// Every native->page payload is base64 JSON (DPF does not escape what it injects).
 window.stateChanged = (key, value) => {
+  if (key !== 'evt') return;
   try {
-    const data = decode(value) as { version?: number; schemaVersion?: number; counter?: number };
-    if (key === 'state' && data.schemaVersion === 1) {
-      // Host-restored persisted state (not a bridge event).
-      listeners.forEach((l) => l({ version: 1, type: 'restored', counter: data.counter ?? 0 }));
-      return;
-    }
-    if (data.version !== BRIDGE_VERSION) return;
-    if (key === 'evt') listeners.forEach((l) => l(data as NativeEvent));
+    const data = decode(value) as { version?: number };
+    if (data.version === BRIDGE_VERSION) listeners.forEach((l) => l(data as NativeEvent));
   } catch (e) {
     console.error('bad native message', e);
   }

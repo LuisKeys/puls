@@ -16,3 +16,15 @@ macOS CLAP: `puls.clap/Contents/Resources/index.html` (DPF `getResourcePath`); L
 
 ## ADR-005: Host quarter position
 DPF's CLAP adapter derives bbt from `song_pos_beats` (quarters). Absolute quarter pos = (bar-1)*beatsPerBar + (beat-1) + tick/ticksPerBeat; only valid when `bbt.valid`.
+
+## ADR-006: RT handoff is a wait-free triple buffer of whole snapshots
+`engine/SnapshotExchange.hpp`. The main thread copies the Model into `EngineSnapshot` (pattern + settings, ~7.5 KB POD) and publishes; `run()` acquires once per block. No allocation, locks or deletes on the audio thread; tested with a producer thread for tearing/ordering. Sounding-note bookkeeping lives in `Sequencer`, so replacing the pattern mid-note never leaves stuck notes.
+
+## ADR-007: nlohmann/json 3.11.3 for non-RT code only
+Vendored single header (`third_party/`, sha256 in its README), used by `state/` and `bridge/`, never by `engine/` or `run()`. Plugin builds with `-fno-fast-math`: DPF's default `-ffast-math` removes `isfinite` guards in the engine and breaks json.hpp's infinity handling, and the tests are built without it.
+
+## ADR-008: Bridge validation is atomic and strict
+Commands/props are applied to a copy and committed only if every present key is valid; invalid commands yield an `error` event and change nothing (the UI then re-requests `init`). Persisted state is stricter still: any invalid value rejects the whole state, the model keeps its previous value and an `error` event is queued. Steps are serialized sparsely (defaults omitted). Tracks are addressed by stable id, never index.
+
+## ADR-009: Phase 2 scope vs. the plan
+`selectPattern`, `undo`, `redo` and `patternChanged`-per-bank are deferred to Phase 4 together with the pattern bank and `UndoStack` (there is exactly one pattern now; the toolbar shows its name). Velocity drag is coalesced to one command per animation frame plus the final value. `settings` is an added event. Toolbar resolution/swing act on the selected track; "−" removes the selected track.

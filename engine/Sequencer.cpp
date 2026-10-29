@@ -41,6 +41,7 @@ bool Sequencer::before(const Item& a, const Item& b) noexcept
 void Sequencer::reset() noexcept
 {
     active_.fill(0);
+    playheads_.fill(-1);
     activeCount_ = pendingCount_ = eventCount_ = 0;
     wasPlaying_ = false;
     lastEnd_ = lastHi_ = anchor_ = 0;
@@ -79,6 +80,18 @@ uint32_t Sequencer::frameOf(int64_t time, int64_t t0, double ups, uint32_t frame
     const double x = std::ceil(static_cast<double>(time - t0) / ups - 0.01);
     if (x <= 0.0) return 0;
     return x >= frames ? frames - 1 : static_cast<uint32_t>(x);
+}
+
+void Sequencer::updatePlayheads(const Pattern& p, int64_t t0) noexcept
+{
+    const int count = clampv<int>(p.trackCount, 0, kMaxTracks);
+    for (int i = 0; i < kMaxTracks; ++i) {
+        if (i >= count) { playheads_[i] = -1; continue; }
+        const Track& tr = p.tracks[i];
+        const int length = clampv<int>(tr.length, 1, kMaxSteps);
+        const int64_t s = std::max<int64_t>(0, floorDiv(t0 - anchor_, unitsPerStep(tr.resolution)));
+        playheads_[i] = static_cast<int16_t>((s + tr.phase % length) % length);
+    }
 }
 
 void Sequencer::generate(const Pattern& p, int64_t lo, int64_t hi, uint32_t& order, uint32_t& n) noexcept
@@ -131,6 +144,7 @@ void Sequencer::process(const Pattern& pattern, const TransportInfo& tp, uint32_
                        && std::isfinite(tp.quarterPos) && std::isfinite(tp.bpm) && tp.quarterPos >= 0.0;
     if (!valid) {
         releaseAll();
+        playheads_.fill(-1);
         wasPlaying_ = false;
         return;
     }
@@ -159,6 +173,8 @@ void Sequencer::process(const Pattern& pattern, const TransportInfo& tp, uint32_
     if (t1 <= t0) t1 = t0 + 1;
     int64_t hi = t1 - shift;
     if (hi <= lo) hi = lo + 1;
+
+    updatePlayheads(pattern, t0);
 
     uint32_t n = 0, order = 0;
     generate(pattern, lo, hi, order, n);
