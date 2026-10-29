@@ -59,7 +59,7 @@ first when the pattern has steps, and undo reverts it. The project remembers whi
 
 ```json
 {"id": "bitwig-v8-edrums-01", "name": "Bitwig v8 E-drums Kit 01", "category": "drums", "source": "Bitwig Studio",
- "tracks": [{"name": "E-Tom3Hi", "note": 40, "color": "#ff6256"}, {"name": "E-Tom8M", "note": 41, "color": "#ffab50"}]}
+ "tracks": [{"name": "E-Kick801", "note": 36, "color": "#ff6256"}, {"name": "E-Snare01", "note": 37, "color": "#ffab50"}]}
 ```
 `id`: 1-31 of `a-z 0-9 -`, also the file name. `name`: 1-31 bytes. `tracks`: 1-16, each with the keys of a track in
 the project state (`name` up to 15 bytes, `note`, `channel` 0-15, `color`, `length`, `resolution`, `phase`, `swing`,

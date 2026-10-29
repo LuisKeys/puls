@@ -639,13 +639,14 @@ TEST(bitwig_v8_edrums_template_maps_the_kit)
     if (t == nullptr) return;
     CHECK(t->name == "Bitwig v8 E-drums Kit 01");
     CHECK(!t->user);
-    static const char* const names[12] = {"E-Tom3Hi", "E-Tom8M", "v8 Claves", "v8 Cowbell", "E-Kick802", "E-Clap802",
-                                          "v8Rimshot", "E-Cymb02", "E-Kick801", "E-Snare01", "E-Hat801", "E-Hat801"};
+    // Bitwig's pad grid, bottom row first (C1 = 36 there): 36-47 are used, 48-51 (the top row, C2-D#2) are empty.
+    static const char* const names[12] = {"E-Kick801", "E-Snare01", "E-Hat801", "E-Hat801", "E-Kick802", "E-Clap802",
+                                          "v8Rimshot", "E-Cymb02", "E-Tom8Hi", "E-Tom8M", "v8 Claves", "v8 Cowbell"};
     CHECK_EQ(t->tracks.size(), 12);
     for (size_t i = 0; i < t->tracks.size() && i < 12; ++i) {
         const Track& tr = t->tracks[i];
         CHECK(std::string(tr.name) == names[i]);
-        CHECK_EQ(tr.note, 40 + static_cast<int>(i));
+        CHECK_EQ(tr.note, 36 + static_cast<int>(i));
         CHECK_EQ(tr.channel, 0);
         CHECK_EQ(tr.length, 16);
         CHECK(tr.resolution == Resolution::Sixteenth);
@@ -690,7 +691,7 @@ TEST(apply_template_replaces_tracks_and_is_one_undo_step)
     CHECK(std::string(p.name) == "Pattern 3");
     CHECK(std::string(p.templateId) == "bitwig-v8-edrums-01");
     CHECK(isBlank(p));
-    for (int i = 0; i < p.trackCount; ++i) { CHECK_EQ(p.tracks[i].id, firstId + i); CHECK_EQ(p.tracks[i].note, 40 + i); }
+    for (int i = 0; i < p.trackCount; ++i) { CHECK_EQ(p.tracks[i].id, firstId + i); CHECK_EQ(p.tracks[i].note, 36 + i); }
     CHECK_EQ(m.nextTrackId, firstId + 12);
 
     // tracks stay independent and editable; the 4 free slots can be filled
