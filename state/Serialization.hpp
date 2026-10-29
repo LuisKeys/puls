@@ -2,6 +2,7 @@
 #include "Model.hpp"
 #include "json.hpp"
 #include <string>
+#include <string_view>
 
 namespace puls {
 
@@ -14,6 +15,8 @@ nlohmann::json patternToJson(const Pattern& p);
 nlohmann::json settingsToJson(const Settings& s);
 nlohmann::json bankSummaryToJson(const Model& m);   // [{name, used}] for all slots, for the pattern bank UI
 const char* resolutionName(Resolution r);           // "1/16", "1/8T", ... (the wire/display name)
+// A template id: 1..31 bytes of [a-z0-9-]. Patterns name the template their tracks came from with one ("template").
+bool validTemplateId(std::string_view id);
 
 // Validating readers. They apply only the keys that are present on top of `out`, and return false with a
 // message (leaving `out` unspecified) if any present key has the wrong type or is out of range.

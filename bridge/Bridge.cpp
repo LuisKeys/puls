@@ -1,5 +1,6 @@
 #include "Bridge.hpp"
 #include "Serialization.hpp"
+#include "Templates.hpp"
 #include <algorithm>
 #include <cstdio>
 
@@ -90,6 +91,15 @@ json clipboardEvent(const Model& m)
     return e;
 }
 
+json templatesEvent(const TemplateStore& store)
+{
+    json e = event("templates");
+    json arr = json::array();
+    for (const KitTemplate& t : store.list()) arr.push_back({{"id", t.id}, {"name", t.name}, {"user", t.user}});
+    e["templates"] = std::move(arr);
+    return e;
+}
+
 constexpr uint32_t kNewTrackColors[] = {0xFF6256, 0xFFAB50, 0xE3D65C, 0x79D86A, 0x48D9B1, 0x50BAF1, 0x9C8CF5, 0xE77FCE};
 
 } // namespace
@@ -112,7 +122,14 @@ std::string Bridge::initEvent() const
     e["canUndo"] = model_.history.canUndo();
     e["canRedo"] = model_.history.canRedo();
     e["hasClipboard"] = model_.hasClipboard;
+    e["templates"] = templatesEvent(templates()).at("templates");
     return dumpJson(e);
+}
+
+const TemplateStore& Bridge::templates() const
+{
+    static const TemplateStore builtIns;
+    return templates_ != nullptr ? *templates_ : builtIns;
 }
 
 Bridge::Result Bridge::handle(const char* text)
@@ -337,6 +354,34 @@ Bridge::Result Bridge::handle(const char* text)
             for (Step& st : p.tracks[i].steps) st = Step{};
         selectedChanged = idx == model_.selected;
         r.changed = true;
+    } else if (type == "applyTemplate") {
+        int idx = 0;
+        if (!readIndex(cmd, "index", kBankSize, idx, err)) return fail();
+        const auto it = cmd.find("template");
+        const KitTemplate* kit = it != cmd.end() && it->is_string() ? templates().find(it->get_ref<const std::string&>()) : nullptr;
+        if (kit == nullptr) { err = "template: unknown id"; return fail(); }
+        histIndex = idx; before = model_.bank[idx];
+        applyTemplate(*kit, model_.bank[idx], model_.nextTrackId);
+        selectedChanged = idx == model_.selected;
+        r.changed = true;
+    } else if (type == "saveTemplate" || type == "deleteTemplate") {
+        if (templates_ == nullptr) { err = "templates cannot be saved here"; return fail(); }
+        if (type == "saveTemplate") {
+            int idx = 0;
+            if (!readIndex(cmd, "index", kBankSize, idx, err)) return fail();
+            const auto nit = cmd.find("name");
+            if (nit == cmd.end() || !nit->is_string()) { err = "name: expected a string"; return fail(); }
+            const auto oit = cmd.find("overwrite");
+            if (oit != cmd.end() && !oit->is_boolean()) { err = "overwrite: expected a boolean"; return fail(); }
+            std::string id;
+            if (!templates_->save(nit->get<std::string>(), model_.bank[idx], oit != cmd.end() && oit->get<bool>(), id, err)) return fail();
+        } else {
+            const auto iit = cmd.find("template");
+            if (iit == cmd.end() || !iit->is_string()) { err = "template: expected a template id"; return fail(); }
+            if (!templates_->remove(iit->get<std::string>(), err)) return fail();
+        }
+        r.events.push_back(dumpJson(templatesEvent(*templates_)));
+        undoable = false;
     } else if (type == "undo" || type == "redo") {
         const int idx = type == "undo" ? model_.history.undo(model_.bank.data()) : model_.history.redo(model_.bank.data());
         if (idx < 0) { err = type == "undo" ? "nothing to undo" : "nothing to redo"; return fail(); }
@@ -368,7 +413,7 @@ Bridge::Result Bridge::handle(const char* text)
             }
         }
     }
-    if (type == "duplicatePattern" || type == "pastePattern" || type == "renamePattern" || type == "clearPattern" ||
+    if (type == "duplicatePattern" || type == "pastePattern" || type == "applyTemplate" || type == "renamePattern" || type == "clearPattern" ||
         type == "undo" || type == "redo" || type == "toggleStep" || type == "setStepVelocity" || type == "modifyStep" ||
         type == "editSteps") {
         json summary = bankSummaryToJson(model_);

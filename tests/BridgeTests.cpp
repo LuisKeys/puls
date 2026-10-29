@@ -4,6 +4,8 @@
 #include "SnapshotExchange.hpp"
 #include "TestHelpers.hpp"
 #include <atomic>
+#include <cstdlib>
+#include <unistd.h>
 #include <random>
 #include <thread>
 
@@ -611,6 +613,165 @@ TEST(switching_steps_on_auditions_each_track_once_and_can_be_turned_off)
     Model d;
     CHECK(loadState("{\"schemaVersion\":2,\"patterns\":[{\"tracks\":[{\"id\":1}]}],\"settings\":{}}", d, err));
     CHECK(d.settings.audition);
+}
+
+// ---- Templates ----
+
+static std::string tempDir()
+{
+    char buf[] = "/tmp/puls-templates-XXXXXX";
+    const char* d = mkdtemp(buf);
+    return d != nullptr ? std::string(d) + "/user" : std::string();   // a subfolder that does not exist yet
+}
+
+static void removeDir(const std::string& dir)
+{
+    if (dir.empty()) return;
+    if (std::system(("rm -rf '" + dir.substr(0, dir.rfind('/')) + "'").c_str()) != 0) std::printf("    could not remove %s\n", dir.c_str());
+}
+
+TEST(bitwig_v8_edrums_template_maps_the_kit)
+{
+    CHECK_EQ(builtInTemplates().size(), builtInTemplateSourceCount());   // every embedded file is valid
+    const TemplateStore store;
+    const KitTemplate* t = store.find("bitwig-v8-edrums-01");
+    CHECK(t != nullptr);
+    if (t == nullptr) return;
+    CHECK(t->name == "Bitwig v8 E-drums Kit 01");
+    CHECK(!t->user);
+    static const char* const names[12] = {"E-Tom3Hi", "E-Tom8M", "v8 Claves", "v8 Cowbell", "E-Kick802", "E-Clap802",
+                                          "v8Rimshot", "E-Cymb02", "E-Kick801", "E-Snare01", "E-Hat801", "E-Hat801"};
+    CHECK_EQ(t->tracks.size(), 12);
+    for (size_t i = 0; i < t->tracks.size() && i < 12; ++i) {
+        const Track& tr = t->tracks[i];
+        CHECK(std::string(tr.name) == names[i]);
+        CHECK_EQ(tr.note, 40 + static_cast<int>(i));
+        CHECK_EQ(tr.channel, 0);
+        CHECK_EQ(tr.length, 16);
+        CHECK(tr.resolution == Resolution::Sixteenth);
+    }
+}
+
+TEST(template_parsing_is_strict)
+{
+    KitTemplate t; std::string err;
+    auto parse = [&](const char* s) { err.clear(); return parseTemplate(json::parse(s), t, err); };
+    CHECK(parse(R"({"id":"a-1","name":"A","tracks":[{"note":40},{"note":40,"channel":1}]})"));
+    CHECK_EQ(t.tracks.size(), 2);
+    CHECK(!parse(R"({"id":"a","name":"A","tracks":[{"note":40},{"note":40}]})"));          // same note and channel
+    CHECK(!parse(R"({"id":"A b","name":"A","tracks":[{"note":40}]})"));                    // id characters
+    CHECK(!parse(R"({"id":"a","name":"","tracks":[{"note":40}]})"));
+    CHECK(!parse(R"({"id":"a","name":"A","tracks":[]})"));
+    CHECK(!parse(R"({"id":"a","name":"A","tracks":[{"name":"0123456789abcdef"}]})"));      // 16-byte track name
+    CHECK(!parse(R"({"id":"a","name":"A","tracks":[{"note":40,"steps":[]}]})"));
+    json many = {{"id", "a"}, {"name", "A"}, {"tracks", json::array()}};
+    for (int i = 0; i < 17; ++i) many["tracks"].push_back({{"note", 30 + i}});
+    CHECK(!parseTemplate(many, t, err));
+    CHECK(templateSlug("Mi Kit #2 (909)") == "mi-kit-2-909");
+    CHECK(templateSlug("  ¡!  ").empty());
+}
+
+TEST(apply_template_replaces_tracks_and_is_one_undo_step)
+{
+    Model m = defaultModel(); Bridge b(m);
+    cmd(b, "{\"version\":1,\"type\":\"selectPattern\",\"index\":2}");
+    cmd(b, "{\"version\":1,\"type\":\"toggleStep\",\"track\":1,\"step\":3}");
+    const std::string before = saveState(m);
+    const uint32_t firstId = m.nextTrackId;
+
+    CHECK(typeOf(cmd(b, "{\"version\":1,\"type\":\"applyTemplate\",\"index\":2,\"template\":\"nope\"}")) == "error");
+    CHECK(saveState(m) == before);
+
+    auto r = cmd(b, "{\"version\":1,\"type\":\"applyTemplate\",\"index\":2,\"template\":\"bitwig-v8-edrums-01\"}");
+    CHECK(r.changed);
+    CHECK(hasEvent(r, "patternChanged")); CHECK(hasEvent(r, "history")); CHECK(hasEvent(r, "bankChanged"));
+    const Pattern& p = m.bank[2];
+    CHECK_EQ(p.trackCount, 12);
+    CHECK(std::string(p.name) == "Pattern 3");
+    CHECK(std::string(p.templateId) == "bitwig-v8-edrums-01");
+    CHECK(isBlank(p));
+    for (int i = 0; i < p.trackCount; ++i) { CHECK_EQ(p.tracks[i].id, firstId + i); CHECK_EQ(p.tracks[i].note, 40 + i); }
+    CHECK_EQ(m.nextTrackId, firstId + 12);
+
+    // tracks stay independent and editable; the 4 free slots can be filled
+    cmd(b, "{\"version\":1,\"type\":\"modifyTrack\",\"track\":" + std::to_string(firstId) + ",\"props\":{\"length\":5,\"resolution\":\"1/8T\"}}");
+    cmd(b, "{\"version\":1,\"type\":\"modifyTrack\",\"track\":" + std::to_string(firstId + 1) + ",\"props\":{\"length\":7,\"note\":60}}");
+    for (int i = 0; i < 4; ++i) CHECK(cmd(b, "{\"version\":1,\"type\":\"addTrack\"}").changed);
+    CHECK_EQ(p.trackCount, 16);
+    CHECK(typeOf(cmd(b, "{\"version\":1,\"type\":\"addTrack\"}")) == "error");
+    CHECK_EQ(p.tracks[0].length, 5); CHECK_EQ(p.tracks[1].length, 7); CHECK_EQ(p.tracks[1].note, 60);
+
+    // the project keeps the template id and the edits
+    Model c; std::string err;
+    CHECK(loadState(saveState(m).c_str(), c, err));
+    CHECK(std::string(c.bank[2].templateId) == "bitwig-v8-edrums-01");
+    CHECK(saveState(c) == saveState(m));
+    CHECK(json::parse(saveState(m))["patterns"][0].count("template") == 0);   // only set where a template was loaded
+    CHECK(!loadState(R"({"schemaVersion":2,"patterns":[{"name":"x","tracks":[],"template":"Bad Id"}]})", c, err));
+    CHECK(!loadState(R"({"schemaVersion":2,"patterns":[{"name":"x","tracks":[],"template":7}]})", c, err));
+
+    for (int i = 0; i < 7; ++i) cmd(b, "{\"version\":1,\"type\":\"undo\"}");
+    CHECK(saveState(m) == before);
+}
+
+TEST(user_templates_are_saved_listed_and_deleted)
+{
+    const std::string dir = tempDir();
+    CHECK(!dir.empty());
+    TemplateStore store(dir);
+    Model m = defaultModel(); Bridge b(m, &store);
+    const size_t builtIn = store.list().size();
+    CHECK(one(cmd(b, "{\"version\":1,\"type\":\"hello\"}"))["templates"].size() == builtIn);
+
+    cmd(b, "{\"version\":1,\"type\":\"modifyTrack\",\"track\":1,\"props\":{\"length\":5,\"name\":\"Bombo\"}}");
+    cmd(b, "{\"version\":1,\"type\":\"toggleStep\",\"track\":1,\"step\":0}");
+    auto r = cmd(b, "{\"version\":1,\"type\":\"saveTemplate\",\"index\":0,\"name\":\"Mi Kit\"}");
+    CHECK(typeOf(r) == "templates");
+    CHECK(!r.changed);
+    CHECK_EQ(one(r)["templates"].size(), builtIn + 1);
+    const KitTemplate* t = store.find("mi-kit");
+    CHECK(t != nullptr && t->user && t->name == "Mi Kit");
+    if (t == nullptr) { removeDir(dir); return; }
+    CHECK_EQ(t->tracks.size(), 8);
+    CHECK(std::string(t->tracks[0].name) == "Bombo"); CHECK_EQ(t->tracks[0].length, 5);
+    CHECK(!t->tracks[0].steps[0].active);
+
+    // another instance (or a restart) sees it
+    TemplateStore again(dir);
+    CHECK(again.find("mi-kit") != nullptr);
+    CHECK(templateToJson(*again.find("mi-kit")) == templateToJson(*t));
+
+    // names are unique (case-insensitive); built-in names are reserved; overwrite replaces
+    CHECK(typeOf(cmd(b, "{\"version\":1,\"type\":\"saveTemplate\",\"index\":0,\"name\":\"mi kit\"}")) == "error");
+    CHECK(typeOf(cmd(b, "{\"version\":1,\"type\":\"saveTemplate\",\"index\":0,\"name\":\"Bitwig v8 E-drums Kit 01\",\"overwrite\":true}")) == "error");
+    CHECK(typeOf(cmd(b, "{\"version\":1,\"type\":\"saveTemplate\",\"index\":0,\"name\":\"\"}")) == "error");
+    cmd(b, "{\"version\":1,\"type\":\"modifyTrack\",\"track\":1,\"props\":{\"length\":9}}");
+    CHECK(typeOf(cmd(b, "{\"version\":1,\"type\":\"saveTemplate\",\"index\":0,\"name\":\"MI KIT\",\"overwrite\":true}")) == "templates");
+    CHECK_EQ(store.list().size(), builtIn + 1);
+    CHECK_EQ(store.find("mi-kit")->tracks[0].length, 9);
+    CHECK(store.find("mi-kit")->name == "MI KIT");
+
+    // load it into another pattern
+    CHECK(typeOf(cmd(b, "{\"version\":1,\"type\":\"applyTemplate\",\"index\":4,\"template\":\"mi-kit\"}")) == "history");
+    CHECK_EQ(m.bank[4].tracks[0].length, 9);
+
+    // a corrupt file and a file whose name does not match its id are skipped
+    if (FILE* f = std::fopen((dir + "/broken.json").c_str(), "w")) { std::fputs("{nope", f); std::fclose(f); }
+    if (FILE* f = std::fopen((dir + "/other.json").c_str(), "w")) { std::fputs(R"({"id":"x","name":"X","tracks":[{"note":1}]})", f); std::fclose(f); }
+    store.reload();
+    CHECK_EQ(store.list().size(), builtIn + 1);
+
+    CHECK(typeOf(cmd(b, "{\"version\":1,\"type\":\"deleteTemplate\",\"template\":\"bitwig-v8-edrums-01\"}")) == "error");
+    CHECK(typeOf(cmd(b, "{\"version\":1,\"type\":\"deleteTemplate\",\"template\":\"mi-kit\"}")) == "templates");
+    CHECK(store.find("mi-kit") == nullptr);
+    CHECK(TemplateStore(dir).find("mi-kit") == nullptr);
+    // the pattern it was loaded into keeps its tracks
+    CHECK_EQ(m.bank[4].tracks[0].length, 9);
+
+    // without a store nothing can be saved
+    Model m2 = defaultModel(); Bridge b2(m2);
+    CHECK(typeOf(cmd(b2, "{\"version\":1,\"type\":\"saveTemplate\",\"index\":0,\"name\":\"X\"}")) == "error");
+    removeDir(dir);
 }
 
 int main() { return testfw::runAll(); }

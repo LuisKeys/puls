@@ -41,6 +41,10 @@ public:
     // Main thread only (the CLAP UI runs there and sends commands through UI::setState, which is synchronous):
     // the native UI reads the Model directly instead of mirroring it from events.
     const puls::Model& model() const noexcept { return fModel; }
+    // Built-in and user templates (main thread). Saving and deleting go through Bridge commands; reloading picks
+    // up templates another instance saved meanwhile.
+    const puls::TemplateStore& templates() const noexcept { return fTemplates; }
+    void reloadTemplates() { fTemplates.reload(); }
 
 protected:
     const char* getLabel() const override       { return "puls"; }
@@ -65,6 +69,7 @@ private:
 
     // Main thread only.
     puls::Model  fModel;
+    puls::TemplateStore fTemplates;
     puls::Bridge fBridge;
     std::mutex   fOutboxMutex;           // guards fOutbox only; never taken in run()
     std::vector<std::string> fOutbox;

@@ -43,8 +43,9 @@ void EditorLayout::update(float w, float h, int tracks, int stepCount, bool conf
     help = take(28, 0);
 
     bank = {0, kToolbarH, w, kBankH};
-    bankName = {slot(15).right() + 12, bank.y, 110, kBankH};
-    transport = {w - kPad - 170, bank.y, 170, kBankH};
+    bankName = {slot(15).right() + 12, bank.y, 64, kBankH};
+    transport = {w - kPad - 130, bank.y, 130, kBankH};
+    kit = {bankName.right() + 8, bank.y + 5, std::max(60.0f, transport.x - 8 - bankName.right() - 8), kCtlH};
 
     // Grid. The horizontal scrollbar only takes space when the steps do not fit.
     const float top = kToolbarH + kBankH;
@@ -143,6 +144,7 @@ Rect EditorLayout::switchOption(int i) const noexcept
 Hit EditorLayout::hitTest(float x, float y, Popup popup) const noexcept
 {
     // An open popup owns the pointer: anything outside it is "None", which closes it.
+    if (popup == Popup::Templates) return {};   // TemplateList hit-tests its own panel
     if (popup == Popup::Resolution) {
         for (int i = 0; i < kResolutionCount; ++i)
             if (resolutionOption(i).contains(x, y)) return {Item::ResolutionOption, i};
@@ -176,7 +178,7 @@ Hit EditorLayout::hitTest(float x, float y, Popup popup) const noexcept
     if (bank.contains(x, y)) {
         for (int i = 0; i < 16; ++i)
             if (slot(i).contains(x, y)) return {Item::Slot, i};
-        return {};
+        return kit.contains(x, y) ? Hit{Item::Kit} : Hit{};
     }
 
     if (hscroll.contains(x, y)) return {Item::HScrollbar};

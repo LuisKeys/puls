@@ -30,6 +30,9 @@ const HelpRow kPatterns[] = {
     {"Alt+click a slot", "Switch immediately"},
     {"Right-click a slot", "Rename, play now, copy, paste, duplicate, clear"},
     {"Green dot", "The pattern that is actually playing"},
+    {"Kit \xE2\x96\xBE (bank bar)", "Templates: load one by name to replace this pattern's tracks (names, notes, colors, lengths; "
+                                   "steps start empty, asks first if there are steps; undo reverts it). The last row saves this "
+                                   "pattern's tracks as your own template, for any project; \xC3\x97 deletes one of yours"},
 };
 
 const HelpRow kMenus[] = {
