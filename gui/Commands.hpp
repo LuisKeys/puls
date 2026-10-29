@@ -18,6 +18,7 @@ nlohmann::json stepProps(const Step& s);           // all properties of a step, 
 std::string editSteps(const nlohmann::json& cells);
 // preview: play the track's note after setting `note`, even with the ♪ setting off.
 std::string modifyTrack(uint32_t track, const nlohmann::json& props, uint32_t gesture = 0, bool preview = false);
+std::string previewNote(uint32_t track, int note);   // plays a note on the track's channel, changes nothing
 std::string addTrack();
 std::string removeTrack(uint32_t track);
 std::string setSettings(const Settings& s);

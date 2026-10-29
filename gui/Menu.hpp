@@ -85,6 +85,10 @@ int         fieldValue(const Model& m, const MenuTarget& t, FieldKey k);        
 std::string fieldText(const Model& m, const MenuTarget& t, FieldKey k);         // Text fields
 bool        fieldEnabled(const Model& m, const MenuTarget& t, FieldKey k);      // Actions may be unavailable
 std::string fieldValueText(FieldKey k, int value);                              // e.g. a resolution name
+// Where a slider (dir 0: the nearest) or a wheel step (dir +1 / -1: the next one that way, from `value`) may
+// land. MIDI notes skip the ones other tracks use on the same channel (current value when there is none);
+// other fields keep `value`.
+int         snapValue(const Model& m, const MenuTarget& t, FieldKey k, int value, int dir);
 
 // The Bridge command that sets field `k` to `value` (shown units) or `text`, or performs the action. Values are
 // clamped to the field's range. Empty when there is nothing valid to send (e.g. an empty name).

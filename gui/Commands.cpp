@@ -68,6 +68,14 @@ std::string modifyTrack(uint32_t track, const json& props, uint32_t gesture, boo
     return str(c);
 }
 
+std::string previewNote(uint32_t track, int note)
+{
+    json c = command("previewNote");
+    c["track"] = track;
+    c["note"] = note;
+    return str(c);
+}
+
 std::string addTrack() { return str(command("addTrack")); }
 
 std::string removeTrack(uint32_t track)

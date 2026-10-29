@@ -35,7 +35,7 @@ public:
     // False when the press was outside the panel: the menu closes and the caller may handle the click.
     bool mouseDown(float x, float y, const puls::Model& m);
     void mouseUp(const puls::Model& m);
-    void motion(float x, float y);
+    void motion(float x, float y, const puls::Model& m);
     bool hover(float x, float y);                     // true when what is hovered changed
     bool scroll(float x, float y, float dy, const puls::Model& m);
     bool key(uint key, const puls::Model& m);         // only while open; true when consumed

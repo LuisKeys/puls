@@ -109,7 +109,7 @@ bool MenuView::mouseDown(float x, float y, const puls::Model& m)
         case MenuPart::Slider:
             dragField_ = h.field;
             dragGesture_ = ++gestureSeq_;
-            dragValue_ = menu_.sliderValueAt(h.field, x);
+            dragValue_ = snapValue(m, menu_.target, f.key, menu_.sliderValueAt(h.field, x), 0);
             dragPending_ = dragValue_ != v;
             break;
         case MenuPart::Number:
@@ -152,10 +152,10 @@ void MenuView::mouseUp(const puls::Model& m)
     dragField_ = -1;
 }
 
-void MenuView::motion(float x, float)
+void MenuView::motion(float x, float, const puls::Model& m)
 {
     if (dragField_ < 0) return;
-    const int v = menu_.sliderValueAt(dragField_, x);
+    const int v = snapValue(m, menu_.target, menu_.fields[dragField_].key, menu_.sliderValueAt(dragField_, x), 0);
     if (v != dragValue_) {
         dragValue_ = v;
         dragPending_ = true;
@@ -179,7 +179,8 @@ bool MenuView::scroll(float x, float y, float dy, const puls::Model& m)
     const bool range = f.type == FieldType::Range && (h.part == MenuPart::Slider || h.part == MenuPart::Number);
     if (!range && f.type != FieldType::Select) return true;
     const int v = fieldValue(m, menu_.target, f.key);
-    const int nv = std::clamp(v + (dy > 0 ? 1 : -1), f.min, f.max);
+    const int d = dy > 0 ? 1 : -1;
+    const int nv = std::clamp(snapValue(m, menu_.target, f.key, std::clamp(v + d, f.min, f.max), d), f.min, f.max);
     if (nv == v) return true;
     if (wheelField_ != h.field) {   // consecutive wheel steps on one control are one undo step
         wheelField_ = h.field;

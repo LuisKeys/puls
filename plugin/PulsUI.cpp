@@ -285,13 +285,14 @@ protected:
             if (h.part != fKeysHover.part || h.index != fKeysHover.index)
             {
                 fKeysHover = h;
+                setCursor(h.part == KeysPart::Key && keyOwner(h.index) != nullptr ? kMouseCursorNotAllowed : kMouseCursorArrow);
                 repaint();
             }
             return true;
         }
         if (fMenu.dragging())
         {
-            fMenu.motion(x, y);
+            fMenu.motion(x, y, model());
             repaint();
             return true;
         }
@@ -723,7 +724,7 @@ private:
         {
         case KeysPart::Outside:
         case KeysPart::Close:
-            fKeysOpen = false;
+            closeKeys();
             break;
         case KeysPart::Prev:
         case KeysPart::Next:
@@ -734,11 +735,28 @@ private:
             break;
         case KeysPart::Key:
             pressKey(h.index, true);
-            setNote(h.index);
+            if (const puls::Track* t = selectedTrack(); t != nullptr && keyOwner(h.index) != nullptr)
+                send(cmd::previewNote(t->id, h.index));   // another track's key: only heard, never shared
+            else
+                setNote(h.index);
             break;
         case KeysPart::Panel:
             break;
         }
+    }
+
+    void closeKeys()
+    {
+        fKeysOpen = false;
+        fKeysHover = {};
+        setCursor(kMouseCursorArrow);
+    }
+
+    // The other track that owns `note` on the selected track's channel (its key is blocked), or nullptr.
+    const puls::Track* keyOwner(int note) const
+    {
+        const puls::Track* t = selectedTrack();
+        return t != nullptr ? puls::noteOwner(pattern(), note, t->channel, t->id) : nullptr;
     }
 
     // Press animation: a key stays down while the mouse button is held (at least kKeyMinDown), then eases back
@@ -785,7 +803,7 @@ private:
         switch (key)
         {
         case kKeyEscape:
-            fKeysOpen = false;
+            closeKeys();
             break;
         case kKeyUp:
         case kKeyDown:
@@ -798,8 +816,14 @@ private:
         case kKeyRight:
             if (const puls::Track* t = selectedTrack())
             {
-                pressKey(std::clamp(t->note + (key == kKeyRight ? 1 : -1), 0, 127), false);
-                setNote(t->note + (key == kKeyRight ? 1 : -1));
+                // The next free note that way: keys of other tracks (same channel) are skipped.
+                const int dir = key == kKeyRight ? 1 : -1;
+                const int n = puls::freeNote(pattern(), t->note + dir, dir, t->channel, t->id);
+                if (n >= 0)
+                {
+                    pressKey(n, false);
+                    setNote(n);
+                }
             }
             break;
         default:
@@ -1368,10 +1392,20 @@ private:
         if (shown >= 0)
         {
             const char* gm = puls::gui::gmDrumName(shown);
-            std::snprintf(buf, sizeof(buf), "%s%s%d  %s%s%s", fKeysHover.part == KeysPart::Key ? "" : sel->name,
-                          fKeysHover.part == KeysPart::Key ? "" : ": ", shown, puls::gui::noteName(shown).c_str(),
-                          gm ? "  \xC2\xB7  " : "", gm ? gm : "");   // ·
+            const bool onKey = fKeysHover.part == KeysPart::Key;
+            const puls::Track* owner = onKey ? keyOwner(shown) : nullptr;
+            std::snprintf(buf, sizeof(buf), "%s%s%d  %s%s%s", onKey ? "" : sel->name, onKey ? "" : ": ", shown,
+                          puls::gui::noteName(shown).c_str(), gm ? "  \xC2\xB7  " : "", gm ? gm : "");   // ·
+            fontSize(12.0f);
+            Rectangle<float> b;
+            const float w = textBounds(0, 0, buf, nullptr, b);
             clippedLabel(fKeys.info, buf, col::text);
+            if (owner != nullptr)   // the key is blocked: say whose it is
+            {
+                char used[48];
+                std::snprintf(used, sizeof(used), "  \xE2\x80\x94  used by %s", owner->name);   // —
+                clippedLabel({fKeys.info.x + w, fKeys.info.y, fKeys.info.w - w, fKeys.info.h}, used, col::muteOn);
+            }
         }
         button(fKeys.prev, "\xE2\x80\xB9", fKeys.firstOctave > 0, false, hot(KeysPart::Prev), 14.0f);                    // ‹
         button(fKeys.next, "\xE2\x80\xBA", fKeys.firstOctave < fKeys.maxFirstOctave(), false, hot(KeysPart::Next), 14.0f);   // ›
