@@ -9,9 +9,12 @@ type Field =
   | { kind: 'text'; label: string; maxBytes: number; value: string; commit: (v: string, g: number) => void }
   | { kind: 'color'; label: string; value: string; commit: (v: string, g: number) => void }
   | { kind: 'select'; label: string; options: readonly string[]; value: string; commit: (v: string, g: number) => void }
-  | { kind: 'check'; label: string; value: boolean; commit: (v: boolean, g: number) => void };
+  | { kind: 'check'; label: string; value: boolean; commit: (v: boolean, g: number) => void }
+  | { kind: 'action'; label: string; disabled?: boolean; run: () => void };
 
 let menu: HTMLElement | null = null;
+
+export const isMenuOpen = (): boolean => menu !== null;
 
 export function closeMenu(): void {
   menu?.remove();
@@ -37,6 +40,17 @@ function row(label: string, control: HTMLElement[]): HTMLElement {
 }
 
 function build(f: Field): HTMLElement {
+  if (f.kind === 'action') {
+    const b = document.createElement('button');
+    b.className = 'maction';
+    b.textContent = f.label;
+    b.disabled = !!f.disabled;
+    b.addEventListener('click', () => {
+      closeMenu();
+      f.run();
+    });
+    return b;
+  }
   let g = nextGesture();
   const renew = (): void => void (g = nextGesture());
   switch (f.kind) {
@@ -97,7 +111,7 @@ function build(f: Field): HTMLElement {
   }
 }
 
-function open(x: number, y: number, title: string, fields: Field[], footer?: HTMLElement): void {
+export function openMenu(x: number, y: number, title: string, fields: Field[], footer?: HTMLElement): void {
   closeMenu();
   const el = document.createElement('div');
   el.className = 'menu';
@@ -128,7 +142,7 @@ export function openStepMenu(x: number, y: number, trackId: number, stepIdx: num
     send({ type: 'modifyStep', track: trackId, step: stepIdx, props: { ...DEFAULT_STEP } });
     closeMenu();
   });
-  open(x, y, `${t.name} · step ${stepIdx + 1}`, [
+  openMenu(x, y, `${t.name} · step ${stepIdx + 1}`, [
     { kind: 'check', label: 'Active', value: st.active, commit: (v, g) => mod({ active: v }, g) },
     { kind: 'range', label: 'Velocity', min: 1, max: 127, value: st.velocity, commit: (v, g) => mod({ velocity: v }, g) },
     { kind: 'range', label: 'Probability %', min: 0, max: 100, value: st.probability, commit: (v, g) => mod({ probability: v }, g) },
@@ -146,7 +160,7 @@ export function openTrackMenu(x: number, y: number, trackId: number): void {
     kind: 'range', label, min: min + offset, max: max + offset, value: (t[key] as number) + offset,
     commit: (v, g) => mod({ [key]: v - offset }, g),
   });
-  open(x, y, t.name, [
+  openMenu(x, y, t.name, [
     { kind: 'text', label: 'Name', maxBytes: 15, value: t.name, commit: (v, g) => v.trim() && mod({ name: v }, g) },
     { kind: 'color', label: 'Color', value: t.color, commit: (v, g) => mod({ color: v }, g) },
     range('MIDI note', 'note', 0, 127),

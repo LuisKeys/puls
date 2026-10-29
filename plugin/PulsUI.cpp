@@ -77,14 +77,16 @@ protected:
         int8_t heads[puls::kMaxTracks];
         for (int i = 0; i < puls::kMaxTracks; ++i)
             heads[i] = fPlugin->telPlayhead[i].load(std::memory_order_relaxed);
-        if (count != fLastCount || std::memcmp(heads, fLastHeads, sizeof(heads)) != 0)
+        const int pattern = fPlugin->telPlayingPattern.load(std::memory_order_relaxed);
+        if (pattern != fLastPattern || count != fLastCount || std::memcmp(heads, fLastHeads, sizeof(heads)) != 0)
         {
             fLastCount = count;
+            fLastPattern = pattern;
             std::memcpy(fLastHeads, heads, sizeof(heads));
             std::string json = "{\"version\":1,\"type\":\"playheads\",\"steps\":[";
             for (int i = 0; i < count; ++i)
                 json += (i ? "," : "") + std::to_string(heads[i]);
-            json += "]}";
+            json += "],\"pattern\":" + std::to_string(pattern) + "}";
             UI::stateChanged("evt", base64(json).c_str());
         }
     }
@@ -102,6 +104,7 @@ private:
     double fLastQ = -1.0;
     double fLastBpm = -1.0;
     int    fLastCount = -1;
+    int    fLastPattern = -1;
     int8_t fLastHeads[puls::kMaxTracks] = {};
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PulsUI)
 };

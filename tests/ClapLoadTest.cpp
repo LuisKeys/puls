@@ -95,9 +95,9 @@ int main(int argc, char** argv)
         Buf c; clap_ostream_t os2{&c, wr};
         CHECK(st->save(p, &os2));
         CHECK(a.data == c.data);
-        CHECK(a.data.find("\"schemaVersion\":1") != std::string::npos);
+        CHECK(a.data.find("\"schemaVersion\":2") != std::string::npos);
 
-        // Restore a non-default pattern in DPF's state container format and read it back.
+        // Restore a v1 (pre-bank) document in DPF's state container format: it must migrate into slot 0 and re-save as v2.
         const std::string json = "{\"schemaVersion\":1,\"pattern\":{\"name\":\"Restored\",\"seed\":1,\"tracks\":"
                                  "[{\"id\":3,\"name\":\"Zed\",\"note\":60,\"length\":5,\"steps\":[{\"active\":true,\"velocity\":99}]}]},"
                                  "\"settings\":{\"anchorMode\":\"host\",\"enabled\":true}}";
@@ -162,6 +162,37 @@ int main(int argc, char** argv)
     }
     CHECK(ons == offs || ons == offs + 1);
     std::printf("events: %zu (on=%d off=%d)\n", out.evs.size(), ons, offs);
+
+    // Restoring a project whose selected slot is 1 switches playback to that pattern (kick -> note 60) while running.
+    {
+        std::string steps60;
+        for (int i = 0; i < 16; ++i) steps60 += i ? ",{\"active\":true}" : "{\"active\":true}";
+        const std::string track60 = "{\"id\":1,\"note\":60,\"steps\":[" + steps60 + "]}";
+        const std::string doc = "{\"schemaVersion\":2,\"selected\":1,\"patterns\":[{\"name\":\"A\",\"tracks\":[{\"id\":1,\"note\":36,\"steps\":[{\"active\":true}]}]},"
+                                "{\"name\":\"B\",\"tracks\":[" + track60 + "]}]}";
+        std::string payload = std::string("__dpf_state_begin__") + '\0' + "state" + '\0' + doc + '\0' + "__dpf_state_end__" + '\0' + '\xfe';
+        Buf d; d.data = payload; clap_istream_t isd{&d, rd};
+        CHECK(st->load(p, &isd));
+        const size_t first = out.evs.size();
+        for (int blk = 100; blk < 140; ++blk) {
+            const double quarter = (blk * N) / sr * 2.0;
+            clap_event_transport_t tr{};
+            tr.header = {sizeof(tr), 0, 0, CLAP_EVENT_TRANSPORT, 0};
+            tr.flags = CLAP_TRANSPORT_HAS_TEMPO | CLAP_TRANSPORT_HAS_BEATS_TIMELINE | CLAP_TRANSPORT_HAS_TIME_SIGNATURE | CLAP_TRANSPORT_IS_PLAYING;
+            tr.song_pos_beats = (clap_beattime)(quarter * CLAP_BEATTIME_FACTOR);
+            tr.tempo = 120.0; tr.tsig_num = 4; tr.tsig_denom = 4;
+            clap_process_t pr{};
+            pr.steady_time = (int64_t)steady; pr.frames_count = N; pr.transport = &tr;
+            pr.in_events = &in; pr.out_events = &oe;
+            CHECK(p->process(p, &pr) != CLAP_PROCESS_ERROR);
+            steady += N;
+        }
+        int on60 = 0, on36 = 0;
+        for (size_t i = first; i < out.evs.size(); ++i)
+            if (out.evs[i].type == CLAP_EVENT_NOTE_ON) { on60 += out.evs[i].key == 60; on36 += out.evs[i].key == 36; }
+        CHECK(on60 >= 3);
+        CHECK(on36 == 0);
+    }
 
     p->stop_processing(p);
     p->deactivate(p);

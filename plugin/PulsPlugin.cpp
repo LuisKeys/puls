@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 
 START_NAMESPACE_DISTRHO
 
@@ -12,8 +13,9 @@ static constexpr const char* kCmdKey   = "cmd";
 static constexpr size_t kMaxOutbox = 512;
 
 PulsPlugin::PulsPlugin()
-    : Plugin(0, 0, 1), fModel(puls::makeDefaultModel()), fBridge(fModel)
+    : Plugin(0, 0, 1), fBridge(fModel)
 {
+    puls::makeDefaultBank(fModel);
     for (auto& p : telPlayhead)
         p.store(-1, std::memory_order_relaxed);
     publish();
@@ -22,7 +24,7 @@ PulsPlugin::PulsPlugin()
 void PulsPlugin::publish()
 {
     puls::EngineSnapshot& slot = fExchange.writeSlot();
-    slot.pattern = fModel.pattern;
+    slot.patterns = fModel.bank;
     slot.settings = fModel.settings;
     fExchange.publish();
 }
@@ -52,7 +54,11 @@ void PulsPlugin::initState(uint32_t index, State& state)
 {
     if (index != 0)
         return;
-    static const std::string defaultState = puls::saveState(puls::makeDefaultModel());
+    static const std::string defaultState = [] {
+        auto m = std::make_unique<puls::Model>();
+        puls::makeDefaultBank(*m);
+        return puls::saveState(*m);
+    }();
     state.key = kStateKey;
     state.defaultValue = defaultState.c_str();
     state.label = "State";
@@ -74,6 +80,7 @@ void PulsPlugin::setState(const char* key, const char* value)
         if (puls::loadState(value, fModel, err))
         {
             publish();
+            fSwitchQueue.push(puls::SwitchRequest{static_cast<uint8_t>(fModel.selected), puls::SwitchQuantize::Now});
             pushEvent(fBridge.initEvent());   // an already-open UI shows the restored project
         }
         else
@@ -86,6 +93,8 @@ void PulsPlugin::setState(const char* key, const char* value)
         puls::Bridge::Result r = fBridge.handle(value);
         if (r.changed)
             publish();
+        if (r.switchRequested)
+            fSwitchQueue.push(r.request);   // full queue (UI hammering): the newest request is dropped
         for (const std::string& ev : r.events)
             pushEvent(ev);
     }
@@ -121,11 +130,21 @@ void PulsPlugin::run(const float**, float**, uint32_t frames)
     const puls::EngineSnapshot& snap = fExchange.acquire(fresh);
     fSeq.setAnchorMode(snap.settings.anchorMode);
 
+    puls::SwitchRequest request;
+    while (fSwitchQueue.pop(request))
+        fSwitcher.request(request);
+
     // A disabled sequencer is a stopped one: sounding notes are released and nothing is emitted.
     const bool play = snap.settings.enabled && pos.playing && pos.bbt.valid;
-    fSeq.process(snap.pattern, puls::TransportInfo{play, q0, bpm, getSampleRate()}, frames);
+    fSwitcher.plan(play, q0, pos.bbt.valid ? pos.bbt.beatsPerBar : 4.0);
+    const puls::Pattern& current = snap.patterns[fSwitcher.current()];
+    fSeq.process(current, puls::TransportInfo{play, q0, bpm, getSampleRate()}, frames,
+                 fSwitcher.pending() ? &snap.patterns[fSwitcher.pendingIndex()] : nullptr, fSwitcher.switchAt());
+    if (fSeq.switchCommitted())
+        fSwitcher.commit();
 
-    telTrackCount.store(snap.pattern.trackCount, std::memory_order_relaxed);
+    telPlayingPattern.store(static_cast<int8_t>(fSwitcher.current()), std::memory_order_relaxed);
+    telTrackCount.store(current.trackCount, std::memory_order_relaxed);
     for (int i = 0; i < puls::kMaxTracks; ++i)
         telPlayhead[i].store(static_cast<int8_t>(fSeq.playhead(i)), std::memory_order_relaxed);
 

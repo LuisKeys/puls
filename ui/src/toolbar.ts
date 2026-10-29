@@ -1,6 +1,6 @@
 import { send } from './bridge';
 import { onChange, selectedTrack, state } from './state';
-import { MAX_TRACKS, RESOLUTIONS, type Resolution } from './types';
+import { MAX_TRACKS, RESOLUTIONS, type Resolution, type SwitchQuantize } from './types';
 
 const $ = <T extends HTMLElement>(root: HTMLElement, sel: string): T => root.querySelector<T>(sel)!;
 
@@ -29,6 +29,13 @@ export function mountToolbar(el: HTMLElement): void {
         <select class="anchor">
           <option value="restart">Restart where playback starts</option>
           <option value="host">Follow song position</option>
+        </select>
+      </label>
+      <label>Pattern switch
+        <select class="pswitch">
+          <option value="bar">At the next bar</option>
+          <option value="beat">At the next beat</option>
+          <option value="now">Immediately</option>
         </select>
       </label>
     </div>
@@ -83,6 +90,10 @@ export function mountToolbar(el: HTMLElement): void {
     send({ type: 'setSettings', settings: { anchorMode: (e.target as HTMLSelectElement).value as 'restart' | 'host' } }),
   );
 
+  $<HTMLSelectElement>(el, '.pswitch').addEventListener('change', (e) =>
+    send({ type: 'setSettings', settings: { patternSwitch: (e.target as HTMLSelectElement).value as SwitchQuantize } }),
+  );
+
   let statusTimer = 0;
   const refresh = (): void => {
     const t = selectedTrack();
@@ -102,6 +113,7 @@ export function mountToolbar(el: HTMLElement): void {
       swingv.textContent = String(t.swing);
     }
     $<HTMLSelectElement>(el, '.anchor').value = state.settings.anchorMode;
+    $<HTMLSelectElement>(el, '.pswitch').value = state.settings.patternSwitch;
   };
 
   onChange((c) => {

@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 
 namespace puls {
 
@@ -168,6 +169,7 @@ json settingsToJson(const Settings& s)
     json j;
     j["anchorMode"] = s.anchorMode == AnchorMode::HostAbsolute ? "host" : "restart";
     j["enabled"] = s.enabled;
+    j["patternSwitch"] = s.patternSwitch == SwitchQuantize::Now ? "now" : s.patternSwitch == SwitchQuantize::Beat ? "beat" : "bar";
     return j;
 }
 
@@ -211,52 +213,52 @@ bool readSettings(const json& j, Settings& out, std::string& err)
         else if (s == "host") out.anchorMode = AnchorMode::HostAbsolute;
         else { err = "anchorMode: expected \"restart\" or \"host\""; return false; }
     }
+    const auto pit = j.find("patternSwitch");
+    if (pit != j.end()) {
+        if (!pit->is_string()) { err = "patternSwitch: expected a string"; return false; }
+        const std::string& q = pit->get_ref<const std::string&>();
+        if (q == "now") out.patternSwitch = SwitchQuantize::Now;
+        else if (q == "beat") out.patternSwitch = SwitchQuantize::Beat;
+        else if (q == "bar") out.patternSwitch = SwitchQuantize::Bar;
+        else { err = "patternSwitch: expected \"now\", \"beat\" or \"bar\""; return false; }
+    }
     return readBool(j, "enabled", out.enabled, err);
 }
 
-std::string saveState(const Model& m)
+json bankSummaryToJson(const Model& m)
 {
-    json j;
-    j["schemaVersion"] = kSchemaVersion;
-    j["pattern"] = patternToJson(m.pattern);
-    j["settings"] = settingsToJson(m.settings);
-    return dumpJson(j);
+    json arr = json::array();
+    for (const Pattern& p : m.bank) {
+        json e;
+        e["name"] = std::string(p.name, strnlen(p.name, sizeof(p.name)));
+        e["used"] = !isBlank(p);
+        arr.push_back(std::move(e));
+    }
+    return arr;
 }
 
-bool loadState(const char* text, Model& out, std::string& err)
+bool readPattern(const json& j, Pattern& out, uint32_t& maxId, std::string& err)
 {
-    const json j = json::parse(text, nullptr, false);
-    if (j.is_discarded() || !j.is_object()) { err = "state: not a JSON object"; return false; }
-    // Migration hook: older schema versions are upgraded here before validation (none exist yet).
-    const auto ver = j.find("schemaVersion");
-    if (ver == j.end() || !ver->is_number_integer() || ver->get<int64_t>() != kSchemaVersion) {
-        err = "state: unsupported schemaVersion";
-        return false;
-    }
-    const auto pit = j.find("pattern");
-    if (pit == j.end() || !pit->is_object()) { err = "state: missing pattern"; return false; }
-
-    Model m;
-    m.pattern = Pattern{};
-    if (!readName(*pit, "name", m.pattern.name, err)) return false;
-    if (!readNum(*pit, "seed", 0, 0xFFFFFFFFll, m.pattern.seed, err)) return false;
-
-    const auto tit = pit->find("tracks");
-    if (tit == pit->end() || !tit->is_array() || tit->size() > static_cast<size_t>(kMaxTracks)) {
+    if (!j.is_object()) { err = "pattern: expected an object"; return false; }
+    Pattern p;
+    if (!readName(j, "name", p.name, err)) return false;
+    if (!readNum(j, "seed", 0, 0xFFFFFFFFll, p.seed, err)) return false;
+    const auto tit = j.find("tracks");
+    if (tit == j.end() || !tit->is_array() || tit->size() > static_cast<size_t>(kMaxTracks)) {
         err = "pattern: tracks must be an array of at most 16";
         return false;
     }
-    uint32_t maxId = 0;
+    maxId = 0;
     for (const json& tj : *tit) {
         if (!tj.is_object()) { err = "track: expected an object"; return false; }
-        Track& t = m.pattern.tracks[m.pattern.trackCount];
+        Track& t = p.tracks[p.trackCount];
         int64_t id = 0;
         if (tj.find("id") == tj.end() || !readInt(tj, "id", 1, 0xFFFFFFFEll, id, err)) {
             if (err.empty()) err = "track: missing id";
             return false;
         }
-        for (int i = 0; i < m.pattern.trackCount; ++i)
-            if (m.pattern.tracks[i].id == id) { err = "track: duplicate id"; return false; }
+        for (int i = 0; i < p.trackCount; ++i)
+            if (p.tracks[i].id == id) { err = "track: duplicate id"; return false; }
         t.id = static_cast<uint32_t>(id);
         if (!readTrackProps(tj, t, err)) return false;
         const auto sit = tj.find("steps");
@@ -266,14 +268,81 @@ bool loadState(const char* text, Model& out, std::string& err)
                 if (!readStep((*sit)[i], t.steps[i], err)) return false;
         }
         maxId = std::max(maxId, t.id);
-        ++m.pattern.trackCount;
+        ++p.trackCount;
     }
-    m.nextTrackId = maxId + 1;
+    out = p;
+    return true;
+}
+
+std::string saveState(const Model& m)
+{
+    json j;
+    j["schemaVersion"] = kSchemaVersion;
+    j["selected"] = m.selected;
+    json pats = json::array();
+    for (const Pattern& p : m.bank) pats.push_back(patternToJson(p));
+    j["patterns"] = std::move(pats);
+    j["settings"] = settingsToJson(m.settings);
+    return dumpJson(j);
+}
+
+// Upgrades older documents to the current schema in place. v1 held a single "pattern".
+static bool migrate(json& j, std::string& err)
+{
+    const auto ver = j.find("schemaVersion");
+    if (ver == j.end() || !ver->is_number_integer()) { err = "state: unsupported schemaVersion"; return false; }
+    int64_t v = ver->get<int64_t>();
+    if (v == 1) {
+        const auto pit = j.find("pattern");
+        if (pit == j.end() || !pit->is_object()) { err = "state: missing pattern"; return false; }
+        json up;
+        up["schemaVersion"] = 2;
+        up["selected"] = 0;
+        up["patterns"] = json::array({*pit});
+        const auto sit = j.find("settings");
+        if (sit != j.end()) up["settings"] = *sit;
+        j = std::move(up);
+        v = 2;
+    }
+    if (v != kSchemaVersion) { err = "state: unsupported schemaVersion"; return false; }
+    return true;
+}
+
+bool loadState(const char* text, Model& out, std::string& err)
+{
+    json j = json::parse(text, nullptr, false);
+    if (j.is_discarded() || !j.is_object()) { err = "state: not a JSON object"; return false; }
+    if (!migrate(j, err)) return false;
+
+    const auto pit = j.find("patterns");
+    if (pit == j.end() || !pit->is_array() || pit->empty() || pit->size() > static_cast<size_t>(kBankSize)) {
+        err = "state: patterns must be an array of 1 to 16";
+        return false;
+    }
+    auto m = std::make_unique<Model>();
+    uint32_t maxId = 0;
+    for (size_t i = 0; i < pit->size(); ++i) {
+        uint32_t id = 0;
+        if (!readPattern((*pit)[i], m->bank[i], id, err)) return false;
+        maxId = std::max(maxId, id);
+    }
+    for (size_t i = pit->size(); i < static_cast<size_t>(kBankSize); ++i) {   // slots missing from the document
+        makeBlankPattern(m->bank[i], static_cast<int>(i) + 1);
+        maxId = std::max<uint32_t>(maxId, m->bank[i].trackCount);
+    }
+    int64_t sel = 0;
+    if (!readInt(j, "selected", 0, kBankSize - 1, sel, err)) return false;
+    m->selected = static_cast<int>(sel);
+    m->nextTrackId = maxId + 1;
 
     const auto sit = j.find("settings");
-    if (sit != j.end() && !readSettings(*sit, m.settings, err)) return false;
+    if (sit != j.end() && !readSettings(*sit, m->settings, err)) return false;
 
-    out = m;
+    out.bank = m->bank;
+    out.selected = m->selected;
+    out.settings = m->settings;
+    out.nextTrackId = m->nextTrackId;
+    out.history.clear();   // clipboard is session state and survives a restore
     return true;
 }
 

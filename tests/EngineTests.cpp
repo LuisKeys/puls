@@ -1,5 +1,7 @@
 #include "TestFramework.hpp"
 #include "TestHelpers.hpp"
+#include "PatternSwitcher.hpp"
+#include "SpscQueue.hpp"
 #include <cstdlib>
 #include <random>
 
@@ -385,6 +387,114 @@ TEST(flush_releases_sounding_notes)
     CHECK_EQ(seq.eventCount(), 1); CHECK(seq.events()[0].isNoteOff());
     CHECK_EQ(seq.soundingNotes(), 0);
     seq.flush(); CHECK_EQ(seq.eventCount(), 0);
+}
+
+// ---- pattern switching ----
+
+static Pattern allStepsPattern(uint8_t note, Resolution r)
+{
+    Pattern p = emptyPattern(1);
+    p.tracks[0].note = note; p.tracks[0].length = 16; p.tracks[0].resolution = r;
+    for (int i = 0; i < 16; ++i) p.tracks[0].steps[i].active = true;
+    return p;
+}
+
+// Plays A, requests B after `requestAtSample` (first block starting at/after it), returns all events.
+static std::vector<AbsEvent> renderSwitch(const Pattern& a, const Pattern& b, SwitchQuantize q, int64_t total, uint32_t block,
+                                          int64_t requestAtSample, bool playing = true)
+{
+    Pattern bank[2] = {a, b};
+    Sequencer seq; PatternSwitcher sw; sw.reset(0);
+    std::vector<AbsEvent> out; bool requested = false;
+    const double bpm = 120.0, sr = 48000.0;
+    for (int64_t s = 0; s < total; s += block) {
+        const uint32_t frames = (uint32_t)std::min<int64_t>(block, total - s);
+        const double qpos = (double)s * bpm / (60.0 * sr);
+        if (!requested && s >= requestAtSample) { sw.request({1, q}); requested = true; }
+        sw.plan(playing, qpos, 4.0);
+        seq.process(bank[sw.current()], TransportInfo{playing, qpos, bpm, sr}, frames,
+                    sw.pending() ? &bank[sw.pendingIndex()] : nullptr, sw.switchAt());
+        if (seq.switchCommitted()) sw.commit();
+        for (uint32_t i = 0; i < seq.eventCount(); ++i) {
+            const MidiMsg& m = seq.events()[i];
+            out.push_back(AbsEvent{s + m.frame, (uint8_t)(m.data[0] & 0xF0), (uint8_t)(m.data[0] & 0x0F), m.data[1], m.data[2]});
+        }
+    }
+    return out;
+}
+
+TEST(bar_quantized_switch_lands_exactly_on_the_bar_for_every_block_size)
+{
+    const Pattern a = allStepsPattern(36, Resolution::Sixteenth), b = allStepsPattern(38, Resolution::Eighth);
+    const int64_t bar = 96000; // 4 quarters @ 120 bpm / 48 kHz
+    std::vector<AbsEvent> ref;
+    for (uint32_t block : {1u, 7u, 64u, 333u, 512u, 4096u}) {
+        auto ev = renderSwitch(a, b, SwitchQuantize::Bar, bar * 3, block, 20000);
+        if (ref.empty()) ref = ev;
+        CHECK(ev == ref);
+        auto kick = onsOf(ev, 36), snare = onsOf(ev, 38);
+        CHECK_EQ((int64_t)kick.size(), bar / 6000);                    // A plays bar 1 only
+        CHECK_EQ(kick.back().sample, bar - 6000);
+        CHECK_EQ(snare.front().sample, bar);                            // B starts on the bar line
+        CHECK_EQ((int64_t)snare.size(), (bar * 2) / 12000);
+        bool valid; checkNoteBalance(ev, valid); CHECK(valid);   // strict on/off alternation across the switch
+    }
+}
+
+TEST(beat_quantized_switch)
+{
+    const Pattern a = allStepsPattern(36, Resolution::Sixteenth), b = allStepsPattern(38, Resolution::Sixteenth);
+    // 1 quarter = 24000 samples. Requested at ~1.26 quarters -> next beat is quarter 2 = sample 48000.
+    std::vector<AbsEvent> ref;
+    for (uint32_t block : {1u, 256u, 4096u}) {
+        auto ev = renderSwitch(a, b, SwitchQuantize::Beat, 72000, block, 30000);
+        if (ref.empty()) ref = ev;
+        CHECK(ev == ref);
+        CHECK_EQ(onsOf(ev, 38).front().sample, 48000);
+        CHECK_EQ(onsOf(ev, 36).back().sample, 42000);
+    }
+}
+
+TEST(immediate_switch_and_stopped_switch)
+{
+    const Pattern a = allStepsPattern(36, Resolution::Sixteenth), b = allStepsPattern(38, Resolution::Sixteenth);
+    auto ev = renderSwitch(a, b, SwitchQuantize::Now, 48000, 512, 20000);
+    // first block starting at/after 20000 is 20480; step boundaries are multiples of 6000 -> B from 24000
+    CHECK(!onsOf(ev, 38).empty());
+    CHECK_EQ(onsOf(ev, 38).front().sample, 24000);
+    CHECK_EQ(onsOf(ev, 36).back().sample, 18000);
+    // stopped: the request applies at once and nothing is emitted
+    auto none = renderSwitch(a, b, SwitchQuantize::Bar, 48000, 512, 0, false);
+    CHECK(none.empty());
+}
+
+TEST(switcher_plans_targets_cancels_and_recovers_from_jumps)
+{
+    PatternSwitcher sw; sw.reset(0);
+    sw.request({1, SwitchQuantize::Bar}); sw.plan(true, 5.5, 4.0);
+    CHECK(sw.pending()); CHECK_EQ(sw.switchAt(), 8 * kUnitsPerQuarter);
+    sw.request({0, SwitchQuantize::Bar}); sw.plan(true, 5.6, 4.0);      // back to the playing one cancels
+    CHECK(!sw.pending());
+    sw.request({2, SwitchQuantize::Beat}); sw.plan(true, 3.0, 4.0);     // exactly on a beat: switch there
+    CHECK_EQ(sw.switchAt(), 3 * kUnitsPerQuarter);
+    sw.request({2, SwitchQuantize::Bar}); sw.plan(true, 100.0, 3.0);    // 3/4 bars; 102 is the next bar line
+    CHECK_EQ(sw.switchAt(), 102 * kUnitsPerQuarter);
+    sw.plan(true, 4.0, 3.0);                                            // transport jumped back: re-resolve
+    CHECK_EQ(sw.switchAt(), 6 * kUnitsPerQuarter);
+    sw.plan(false, 0.0, 4.0);                                           // stopped: applied immediately
+    CHECK(!sw.pending()); CHECK_EQ(sw.current(), 2);
+    sw.request({1, SwitchQuantize::Bar}); sw.plan(false, 0.0, 4.0); CHECK_EQ(sw.current(), 1);
+}
+
+TEST(spsc_queue_preserves_order_and_reports_full)
+{
+    SpscQueue<int, 4> q; int v;
+    CHECK(!q.pop(v));
+    for (int i = 0; i < 4; ++i) CHECK(q.push(i));
+    CHECK(!q.push(99));
+    for (int i = 0; i < 4; ++i) { CHECK(q.pop(v)); CHECK_EQ(v, i); }
+    CHECK(!q.pop(v));
+    for (int i = 0; i < 10; ++i) { CHECK(q.push(i)); CHECK(q.pop(v)); CHECK_EQ(v, i); } // wraps
 }
 
 int main() { return testfw::runAll(); }
