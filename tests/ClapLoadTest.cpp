@@ -55,6 +55,7 @@ int main(int argc, char** argv)
     const std::string bundle = argc > 1 ? argv[1] : "bin/puls.clap";
     void* lib = dlopen((bundle + "/Contents/MacOS/puls").c_str(), RTLD_NOW);
     if (!lib) lib = dlopen((bundle + "/Contents/x86_64-linux/puls.so").c_str(), RTLD_NOW);
+    if (!lib) lib = dlopen(bundle.c_str(), RTLD_NOW);   // Linux: a single-file .clap
     if (!lib) { std::printf("dlopen failed: %s\n", dlerror()); return 2; }
     auto* entry = static_cast<const clap_plugin_entry_t*>(dlsym(lib, "clap_entry"));
     CHECK(entry != nullptr);
