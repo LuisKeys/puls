@@ -1,4 +1,5 @@
 import { send, nextGesture } from './bridge';
+import { isHelpOpen } from './help';
 import { isMenuOpen, openStepMenu, openTrackMenu, closeMenu } from './menu';
 import { DEFAULT_STEP, onChange, select, state, trackById, type Change } from './state';
 import { MAX_STEPS, type Step, type StepEdit, type Track } from './types';
@@ -221,7 +222,7 @@ function pasteClipboard(): void {
 
 function onKeyDown(e: KeyboardEvent): void {
   const el = e.target as HTMLElement;
-  if (isMenuOpen() || el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA' || el.tagName === 'BUTTON') return;
+  if (isMenuOpen() || isHelpOpen() || el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA' || el.tagName === 'BUTTON') return;
   const mod = e.metaKey || e.ctrlKey;
   const tracks = state.pattern.tracks;
   if (tracks.length === 0) return;

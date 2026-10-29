@@ -1,4 +1,5 @@
 import { send } from './bridge';
+import { toggleHelp } from './help';
 import { onChange, selectedTrack, state } from './state';
 import { MAX_TRACKS, RESOLUTIONS, type Resolution, type SwitchQuantize } from './types';
 
@@ -22,6 +23,7 @@ export function mountToolbar(el: HTMLElement): void {
     <span class="confirm" hidden><span class="confirmmsg"></span> <button class="danger yes">Remove</button> <button class="no">Cancel</button></span>
     <span class="sep"></span>
     <button class="gear" title="Settings">⚙</button>
+    <button class="help-btn" title="Help (?)">?</button>
     <span class="spacer"></span>
     <span class="transport dim">stopped</span>
     <div class="settings" hidden>
@@ -76,6 +78,7 @@ export function mountToolbar(el: HTMLElement): void {
     hideConfirm();
   });
   $(el, '.no').addEventListener('click', hideConfirm);
+  $(el, '.help-btn').addEventListener('click', toggleHelp);
   $(el, '.gear').addEventListener('click', () => (settings.hidden = !settings.hidden));
   res.addEventListener('change', () => {
     const t = selectedTrack();
