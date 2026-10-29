@@ -43,7 +43,10 @@ void Sequencer::reset() noexcept
     active_.fill(0);
     playheads_.fill(-1);
     activeCount_ = pendingCount_ = eventCount_ = 0;
-    wasPlaying_ = false;
+    wasPlaying_ = canResume_ = false;
+    stoppedFrames_ = 0;
+    lastUps_ = 0.0;
+    blockKind_ = BlockKind::Stopped;
     lastEnd_ = lastHi_ = anchor_ = 0;
 }
 
@@ -151,7 +154,12 @@ void Sequencer::process(const Pattern& pattern, const TransportInfo& tp, uint32_
     if (!valid) {
         releaseAll();
         playheads_.fill(-1);
+        // Remember where playback was, so a momentary dropout (a block or two without a playing transport)
+        // that comes back where playback would have been does not restart the grid.
+        if (wasPlaying_) { canResume_ = true; stoppedFrames_ = 0; }
+        if (canResume_) stoppedFrames_ += frames;
         wasPlaying_ = false;
+        blockKind_ = BlockKind::Stopped;
         return;
     }
 
@@ -165,16 +173,36 @@ void Sequencer::process(const Pattern& pattern, const TransportInfo& tp, uint32_
     // where block boundaries fall, and consecutive windows tile exactly (lo of a block == hi of the last).
     const int64_t shift = static_cast<int64_t>(0.99 * ups);
 
+    // Host positions are not always sample-exact; only a move beyond kResyncSeconds is a relocation.
+    const int64_t resyncTol = std::max(tol, static_cast<int64_t>(kResyncSeconds * tp.sampleRate * ups));
+    const int64_t drift = startCand - lastEnd_;
+
     int64_t t0, lo;
-    if (wasPlaying_ && std::llabs(startCand - lastEnd_) <= tol) {
+    if (wasPlaying_ && std::llabs(drift) <= tol) {
         t0 = lastEnd_; // continuous: tile exactly with the previous block
         lo = lastHi_;
+        blockKind_ = BlockKind::Continuous;
+    } else if (wasPlaying_ && std::llabs(drift) <= resyncTol) {
+        // Jitter: follow the host but keep the grid, the ownership window and the sounding notes. Events the
+        // host skipped over are emitted at frame 0; a host that stepped back emits nothing twice.
+        t0 = startCand;
+        lo = lastHi_;
+        blockKind_ = BlockKind::Resynced;
+    } else if (!wasPlaying_ && canResume_ && stoppedFrames_ <= static_cast<int64_t>(kMaxDropoutSeconds * tp.sampleRate)
+               && std::llabs(startCand - (lastEnd_ + static_cast<int64_t>(stoppedFrames_ * lastUps_))) <= resyncTol) {
+        // A dropout that ended where playback would have been: keep the grid (notes were released on the way).
+        t0 = startCand;
+        lo = t0 - shift;
+        blockKind_ = BlockKind::Resumed;
     } else {
         releaseAll(); // start from stopped, or a position jump / loop wrap: old note-off times are void
         t0 = startCand;
         anchor_ = anchorMode_ == AnchorMode::RestartOnStart ? t0 : 0;
         lo = t0 - shift;
+        blockKind_ = wasPlaying_ ? BlockKind::Jumped : BlockKind::Started;
     }
+    canResume_ = false;
+    lastUps_ = ups;
     int64_t t1 = static_cast<int64_t>(std::llround(exactStart + static_cast<double>(frames) * ups));
     if (t1 <= t0) t1 = t0 + 1;
     int64_t hi = t1 - shift;

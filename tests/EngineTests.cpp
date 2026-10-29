@@ -658,4 +658,83 @@ TEST(audio_path_performs_no_heap_allocation)
     CHECK_EQ(g_allocs.load(), 0);
 }
 
+// ---- host transport imperfections (field report: a pattern pass "slowed down" in Bitwig) ----
+
+// Runs a 16-step 1/16 track (velocity = step + 1) for `blocks` blocks of B samples; `pos` gives the host
+// position (in samples) and whether it plays for each block. Returns the note-ons and the block kinds.
+struct HostRun { std::vector<AbsEvent> ons; std::vector<Sequencer::BlockKind> kinds; };
+static HostRun runHost(int blocks, uint32_t B, const std::function<std::pair<bool, double>(int)>& pos)
+{
+    Pattern p = emptyPattern(1);
+    fillIndexed(p.tracks[0], 16, Resolution::Sixteenth);
+    const double sr = 48000, bpm = 120;
+    Sequencer seq;
+    HostRun r;
+    for (int b = 0; b < blocks; ++b) {
+        const auto [playing, samplePos] = pos(b);
+        seq.process(p, TransportInfo{playing, samplePos * bpm / (60 * sr), bpm, sr}, B);
+        r.kinds.push_back(seq.blockKind());
+        for (uint32_t i = 0; i < seq.eventCount(); ++i)
+            if (seq.events()[i].isNoteOn())
+                r.ons.push_back({int64_t(b) * B + seq.events()[i].frame, 0x90, 0, seq.events()[i].data[1], seq.events()[i].data[2]});
+    }
+    return r;
+}
+
+static int countKind(const HostRun& r, Sequencer::BlockKind k) { return int(std::count(r.kinds.begin(), r.kinds.end(), k)); }
+
+TEST(host_position_jitter_does_not_restart_the_pattern)
+{
+    // Up to +-4.6 ms of error in each reported block position, so consecutive blocks disagree by < 10 ms
+    // (kResyncSeconds); a 1/16 step is 125 ms at 120 bpm.
+    const uint32_t B = 512;
+    const int blocks = 94 * 8;   // ~8 s = 4 bars
+    const HostRun r = runHost(blocks, B, [&](int b) {
+        const int noise = (b * 7919) % 41 - 20 + (b % 13 == 5 ? 200 : 0) - (b % 17 == 3 ? 200 : 0);
+        return std::make_pair(true, double(b) * B + (b ? noise : 0));
+    });
+    CHECK_EQ(countKind(r, Sequencer::BlockKind::Jumped), 0);
+    CHECK(countKind(r, Sequencer::BlockKind::Resynced) > 0);
+    // Steps keep counting 1..16, 1..16, ... (a restart would send the velocity back to 1 early).
+    CHECK(r.ons.size() >= 60u);
+    for (size_t i = 0; i < r.ons.size(); ++i) {
+        CHECK_EQ((int)r.ons[i].vel, int(i % 16) + 1);
+        const int64_t ideal = int64_t(i) * 6000;   // one 1/16 at 120 bpm, 48 kHz
+        CHECK(std::llabs(r.ons[i].sample - ideal) <= 221);   // off by at most the host's own error
+    }
+}
+
+TEST(a_transport_dropout_does_not_restart_the_pattern)
+{
+    // One block without a playing transport in the middle of the second bar; the host comes back on time.
+    const uint32_t B = 512;
+    const int drop = 94 * 2 + 40;
+    const HostRun r = runHost(94 * 6, B, [&](int b) { return std::make_pair(b != drop, double(b) * B); });
+    CHECK(r.kinds[drop] == Sequencer::BlockKind::Stopped);
+    CHECK(r.kinds[drop + 1] == Sequencer::BlockKind::Resumed);
+    CHECK_EQ(countKind(r, Sequencer::BlockKind::Started), 1);
+    // Every note-on still belongs to its absolute step: no restart from step 1.
+    for (const AbsEvent& e : r.ons) {
+        const int64_t step = (e.sample + 5999) / 6000;   // events land on the first sample at or after the step
+        CHECK_EQ((int)e.vel, int(step % 16) + 1);
+    }
+}
+
+TEST(real_stops_and_relocations_still_restart_the_grid)
+{
+    const uint32_t B = 512;
+    // Stop for half a second, then play from the start again: a new start.
+    HostRun r = runHost(94 * 3, B, [&](int b) {
+        if (b < 94) return std::make_pair(true, double(b) * B);
+        if (b < 94 + 47) return std::make_pair(false, 0.0);
+        return std::make_pair(true, double(b - 94 - 47) * B);
+    });
+    CHECK_EQ(countKind(r, Sequencer::BlockKind::Started), 2);
+    CHECK_EQ(countKind(r, Sequencer::BlockKind::Resumed), 0);
+    // A one-bar loop that wraps back by a bar: a relocation each time.
+    r = runHost(94 * 4, B, [&](int b) { return std::make_pair(true, double(b % 94) * B); });
+    CHECK_EQ(countKind(r, Sequencer::BlockKind::Jumped), 3);
+    CHECK_EQ(countKind(r, Sequencer::BlockKind::Resynced), 0);
+}
+
 int main() { return testfw::runAll(); }

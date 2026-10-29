@@ -49,6 +49,23 @@ public:
     // Step index (into Track::steps) each track is at, at the start of the last processed block; -1 when stopped.
     int playhead(int track) const noexcept { return track >= 0 && track < kMaxTracks ? playheads_[track] : -1; }
 
+    // How the last block related to the previous one (diagnostics and tests).
+    enum class BlockKind : uint8_t {
+        Stopped,     // not playing (or invalid transport): sounding notes released
+        Started,     // playback started: the grid was (re)anchored
+        Continuous,  // the host position continued the previous block (within 2 samples)
+        Resynced,    // the host was slightly off (jitter, <= kResyncSeconds): followed without touching the grid
+        Resumed,     // a short transport dropout ended where playback would have been: the grid was kept
+        Jumped,      // a real relocation (loop wrap, seek): notes released, grid re-anchored in RestartOnStart
+    };
+    BlockKind blockKind() const noexcept { return blockKind_; }
+
+    // Host position errors up to this are treated as jitter, not as a relocation. Loop wraps and seeks move by
+    // at least a step (31 ms for 1/64 at 120 bpm), far beyond it.
+    static constexpr double kResyncSeconds = 0.010;
+    // A dropout (blocks without a playing transport) longer than this is a real stop.
+    static constexpr double kMaxDropoutSeconds = 0.25;
+
 private:
     struct Item {
         int64_t  time;
@@ -68,7 +85,11 @@ private:
     void generate(const Pattern& p, int64_t lo, int64_t hi, uint32_t& order, uint32_t& n) noexcept;
 
     AnchorMode anchorMode_ = AnchorMode::RestartOnStart;
+    BlockKind  blockKind_ = BlockKind::Stopped;
     bool       wasPlaying_ = false;
+    bool       canResume_ = false;   // stopped right after playing: a quick return may continue the grid
+    int64_t    stoppedFrames_ = 0;   // frames since then
+    double     lastUps_ = 0.0;       // units per sample of the last playing block
     bool       switchCommitted_ = false;
     int64_t    lastEnd_ = 0;
     int64_t    lastHi_ = 0;

@@ -1,5 +1,6 @@
 #include "PulsPlugin.hpp"
 #include "Serialization.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -19,6 +20,48 @@ PulsPlugin::PulsPlugin()
     for (auto& p : telPlayhead)
         p.store(-1, std::memory_order_relaxed);
     publish();
+
+    if (const char* path = std::getenv("PULS_TRACE"); path != nullptr && *path != '\0')
+    {
+        fTracePath = path;
+        fTraceOn = true;
+    }
+}
+
+PulsPlugin::~PulsPlugin()
+{
+    if (fTraceFile != nullptr)
+        std::fclose(fTraceFile);
+}
+
+void PulsPlugin::drainTrace()
+{
+    if (!fTraceOn)
+        return;
+    if (fTraceFile == nullptr)
+    {
+        fTraceFile = std::fopen(fTracePath.c_str(), "a");
+        if (fTraceFile == nullptr)
+        {
+            fTraceOn = false;   // unwritable path: give up quietly (records stop being queued too)
+            return;
+        }
+        std::fprintf(fTraceFile, "# puls transport trace, sample rate %.0f; kind: 0 stopped 1 started 2 continuous "
+                                 "3 resynced 4 resumed 5 jumped\nframe,frames,playing,bbt_valid,quarter,bpm,kind,events,head0,pattern\n",
+                     getSampleRate());
+    }
+    TraceRecord r;
+    bool wrote = false;
+    while (fTrace.pop(r))
+    {
+        std::fprintf(fTraceFile, "%llu,%u,%u,%u,%.9f,%.4f,%u,%u,%d,%d\n", static_cast<unsigned long long>(r.frame), r.frames,
+                     r.playing, r.bbtValid, r.quarter, r.bpm, r.kind, r.events, r.head0, r.pattern);
+        wrote = true;
+    }
+    if (const uint32_t lost = fTraceDropped.exchange(0, std::memory_order_relaxed))
+        std::fprintf(fTraceFile, "# %u records lost (editor closed or busy)\n", lost);
+    if (wrote)
+        std::fflush(fTraceFile);
 }
 
 void PulsPlugin::publish()
@@ -147,6 +190,15 @@ void PulsPlugin::run(const float**, float**, uint32_t frames)
     telTrackCount.store(current.trackCount, std::memory_order_relaxed);
     for (int i = 0; i < puls::kMaxTracks; ++i)
         telPlayhead[i].store(static_cast<int8_t>(fSeq.playhead(i)), std::memory_order_relaxed);
+
+    if (fTraceOn)
+    {
+        const TraceRecord r{pos.frame, q0, bpm, frames, pos.playing, pos.bbt.valid, static_cast<uint8_t>(fSeq.blockKind()),
+                            static_cast<uint8_t>(std::min<uint32_t>(fSeq.eventCount(), 255)),
+                            static_cast<int8_t>(fSeq.playhead(0)), static_cast<int8_t>(fSwitcher.current())};
+        if (!fTrace.push(r))
+            fTraceDropped.fetch_add(1, std::memory_order_relaxed);
+    }
 
     for (uint32_t i = 0; i < fSeq.eventCount(); ++i)
     {
