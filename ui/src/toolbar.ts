@@ -6,6 +6,9 @@ const $ = <T extends HTMLElement>(root: HTMLElement, sel: string): T => root.que
 
 export function mountToolbar(el: HTMLElement): void {
   el.innerHTML = `
+    <button class="undo" title="Undo (Ctrl/Cmd+Z)">↶</button>
+    <button class="redo" title="Redo (Shift+Ctrl/Cmd+Z)">↷</button>
+    <span class="sep"></span>
     <button class="enable" title="Enable / disable the sequencer">On</button>
     <span class="pattern dim"></span>
     <span class="sep"></span>
@@ -16,6 +19,7 @@ export function mountToolbar(el: HTMLElement): void {
     <span class="tracks">Tracks <b class="count">0</b></span>
     <button class="rm" title="Remove selected track">−</button>
     <button class="add" title="Add track">+</button>
+    <span class="confirm" hidden><span class="confirmmsg"></span> <button class="danger yes">Remove</button> <button class="no">Cancel</button></span>
     <span class="sep"></span>
     <button class="gear" title="Settings">⚙</button>
     <span class="spacer"></span>
@@ -36,13 +40,35 @@ export function mountToolbar(el: HTMLElement): void {
   const swingv = $<HTMLOutputElement>(el, '.swingv');
   const settings = $(el, '.settings');
   const status = $(el, '.status');
+  const confirmEl = $(el, '.confirm');
+  let confirmTrack = 0;
+  let confirmTimer = 0;
+  const hideConfirm = (): void => {
+    confirmTrack = 0;
+    clearTimeout(confirmTimer);
+    confirmEl.hidden = true;
+  };
+
+  $(el, '.undo').addEventListener('click', () => send({ type: 'undo' }));
+  $(el, '.redo').addEventListener('click', () => send({ type: 'redo' }));
 
   $(el, '.enable').addEventListener('click', () => send({ type: 'setSettings', settings: { enabled: !state.settings.enabled } }));
   $(el, '.add').addEventListener('click', () => send({ type: 'addTrack' }));
   $(el, '.rm').addEventListener('click', () => {
+    // window.confirm() is unreliable in embedded WebViews, so confirm inline.
     const t = selectedTrack();
-    if (t) send({ type: 'removeTrack', track: t.id });
+    if (!t) return;
+    confirmTrack = t.id;
+    $(el, '.confirmmsg').textContent = `Remove "${t.name}"?`;
+    confirmEl.hidden = false;
+    clearTimeout(confirmTimer);
+    confirmTimer = window.setTimeout(hideConfirm, 6000);
   });
+  $(el, '.yes').addEventListener('click', () => {
+    if (confirmTrack) send({ type: 'removeTrack', track: confirmTrack });
+    hideConfirm();
+  });
+  $(el, '.no').addEventListener('click', hideConfirm);
   $(el, '.gear').addEventListener('click', () => (settings.hidden = !settings.hidden));
   res.addEventListener('change', () => {
     const t = selectedTrack();
@@ -61,6 +87,9 @@ export function mountToolbar(el: HTMLElement): void {
   const refresh = (): void => {
     const t = selectedTrack();
     const n = state.pattern.tracks.length;
+    ($(el, '.undo') as HTMLButtonElement).disabled = !state.canUndo;
+    ($(el, '.redo') as HTMLButtonElement).disabled = !state.canRedo;
+    if (confirmTrack && (!t || t.id !== confirmTrack)) hideConfirm();
     $(el, '.enable').classList.toggle('active', state.settings.enabled);
     $(el, '.pattern').textContent = state.pattern.name;
     $(el, '.count').textContent = String(n);

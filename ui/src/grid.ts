@@ -115,18 +115,19 @@ interface Gesture {
   startVel: number;
   wasActive: boolean;
   dragging: boolean;
-  lastSent: number;
+  gestureId: number;
 }
 let gesture: Gesture | null = null;
+let gestureSeq = 0; // tags one drag so the native side records a single undo step
 let velRaf = 0;
-let pendingVel: { id: number; step: number; velocity: number } | null = null;
+let pendingVel: { id: number; step: number; velocity: number; gesture: number } | null = null;
 
 function flushVelocity(): void {
   velRaf = 0;
   if (!pendingVel) return;
   const p = pendingVel;
   pendingVel = null;
-  send({ type: 'setStepVelocity', track: p.id, step: p.step, velocity: p.velocity });
+  send({ type: 'setStepVelocity', track: p.id, step: p.step, velocity: p.velocity, gesture: p.gesture });
 }
 
 function onPointerDown(e: PointerEvent): void {
@@ -138,7 +139,7 @@ function onPointerDown(e: PointerEvent): void {
     const t = trackById(id);
     if (!t) return;
     select(id);
-    gesture = { id, step, pointer: e.pointerId, startY: e.clientY, startVel: t.steps[step].velocity, wasActive: t.steps[step].active, dragging: false, lastSent: -1 };
+    gesture = { id, step, pointer: e.pointerId, startY: e.clientY, startVel: t.steps[step].velocity, wasActive: t.steps[step].active, dragging: false, gestureId: ++gestureSeq };
     root.setPointerCapture(e.pointerId);
     return;
   }
@@ -160,7 +161,7 @@ function onPointerMove(e: PointerEvent): void {
   if (v === t.steps[g.step].velocity) return;
   t.steps[g.step].velocity = v; // optimistic
   paintCell(rows.get(g.id)!.cells[g.step], t, g.step);
-  pendingVel = { id: g.id, step: g.step, velocity: v };
+  pendingVel = { id: g.id, step: g.step, velocity: v, gesture: g.gestureId };
   if (!velRaf) velRaf = requestAnimationFrame(flushVelocity);
 }
 

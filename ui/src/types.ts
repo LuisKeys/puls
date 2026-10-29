@@ -59,19 +59,22 @@ export interface WirePattern {
 export type Command =
   | { version: 1; type: 'hello' }
   | { version: 1; type: 'toggleStep'; track: number; step: number }
-  | { version: 1; type: 'setStepVelocity'; track: number; step: number; velocity: number }
+  | { version: 1; type: 'setStepVelocity'; track: number; step: number; velocity: number; gesture?: number }
   | { version: 1; type: 'modifyStep'; track: number; step: number; props: Partial<Step> }
   | { version: 1; type: 'modifyTrack'; track: number; props: Partial<TrackProps> }
   | { version: 1; type: 'addTrack'; props?: Partial<TrackProps> }
   | { version: 1; type: 'removeTrack'; track: number }
-  | { version: 1; type: 'setSettings'; settings: Partial<Settings> };
+  | { version: 1; type: 'setSettings'; settings: Partial<Settings> }
+  | { version: 1; type: 'undo' }
+  | { version: 1; type: 'redo' };
 
 export type NativeEvent =
-  | { version: 1; type: 'init'; pattern: WirePattern; settings: Settings }
+  | { version: 1; type: 'init'; pattern: WirePattern; settings: Settings; canUndo: boolean; canRedo: boolean }
   | { version: 1; type: 'patternChanged'; pattern: WirePattern }
   | { version: 1; type: 'trackChanged'; track: { id: number } & TrackProps }
   | { version: 1; type: 'stepChanged'; track: number; step: number; data: WireStep }
   | { version: 1; type: 'settings'; settings: Settings }
+  | { version: 1; type: 'history'; canUndo: boolean; canRedo: boolean }
   | { version: 1; type: 'transport'; playing: boolean; bpm: number; quarter: number }
   | { version: 1; type: 'playheads'; steps: number[] }
   | { version: 1; type: 'error'; command?: string; message: string };

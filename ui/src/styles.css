@@ -21,6 +21,9 @@ button, select, input { font: inherit; color: var(--text); background: var(--cel
 button { padding: 4px 10px; cursor: pointer; }
 button:hover:not(:disabled) { border-color: var(--text2); }
 button:disabled { opacity: 0.4; cursor: default; }
+button.danger { color: #fff; background: #8a2c2c; border-color: #8a2c2c; }
+.confirm { display: inline-flex; align-items: center; gap: 6px; color: #f2a0a0; }
+.confirm[hidden] { display: none; }
 button.active { color: var(--bg); background: var(--accent); border-color: var(--accent); }
 select { padding: 3px 4px; }
 label { display: inline-flex; align-items: center; gap: 6px; color: var(--text2); }
