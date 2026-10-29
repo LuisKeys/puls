@@ -60,8 +60,8 @@ export type Command =
   | { version: 1; type: 'hello' }
   | { version: 1; type: 'toggleStep'; track: number; step: number }
   | { version: 1; type: 'setStepVelocity'; track: number; step: number; velocity: number; gesture?: number }
-  | { version: 1; type: 'modifyStep'; track: number; step: number; props: Partial<Step> }
-  | { version: 1; type: 'modifyTrack'; track: number; props: Partial<TrackProps> }
+  | { version: 1; type: 'modifyStep'; track: number; step: number; props: Partial<Step>; gesture?: number }
+  | { version: 1; type: 'modifyTrack'; track: number; props: Partial<TrackProps>; gesture?: number }
   | { version: 1; type: 'addTrack'; props?: Partial<TrackProps> }
   | { version: 1; type: 'removeTrack'; track: number }
   | { version: 1; type: 'setSettings'; settings: Partial<Settings> }

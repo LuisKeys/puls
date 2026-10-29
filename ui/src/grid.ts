@@ -1,4 +1,5 @@
-import { send } from './bridge';
+import { send, nextGesture } from './bridge';
+import { openStepMenu, openTrackMenu, closeMenu } from './menu';
 import { onChange, select, state, trackById, type Change } from './state';
 import { MAX_STEPS, type Step, type Track } from './types';
 
@@ -6,7 +7,7 @@ const DRAG_THRESHOLD_PX = 4;
 const VELOCITY_PER_PX = 0.8;
 
 let root: HTMLElement;
-const rows = new Map<number, { row: HTMLElement; label: HTMLElement; name: HTMLElement; swatch: HTMLElement; len: HTMLInputElement; cells: HTMLElement[] }>();
+const rows = new Map<number, { row: HTMLElement; label: HTMLElement; name: HTMLElement; swatch: HTMLElement; len: HTMLInputElement; mute: HTMLElement; solo: HTMLElement; cells: HTMLElement[] }>();
 const heads = new Map<number, HTMLElement>(); // track id -> cell currently carrying .play
 
 function rgba(hex: string, a: number): string {
@@ -19,6 +20,11 @@ function paintCell(cell: HTMLElement, t: Track, s: number): void {
   const st: Step = t.steps[s];
   cell.classList.toggle('on', st.active);
   cell.classList.toggle('out', s >= t.length);
+  cell.classList.toggle('rat', st.active && st.ratchets > 1);
+  if (st.ratchets > 1) cell.dataset.r = String(st.ratchets);
+  cell.classList.toggle('prob', st.active && st.probability < 100);
+  cell.classList.toggle('early', st.active && st.microtiming < 0);
+  cell.classList.toggle('late', st.active && st.microtiming > 0);
   cell.style.background = st.active ? rgba(t.color, 0.25 + 0.75 * (st.velocity / 127)) : '';
 }
 
@@ -29,6 +35,8 @@ function paintRow(t: Track): void {
   r.swatch.style.background = t.color;
   if (document.activeElement !== r.len) r.len.value = String(t.length);
   r.row.classList.toggle('muted', t.mute);
+  r.mute.classList.toggle('active', t.mute);
+  r.solo.classList.toggle('active', t.solo);
   for (let s = 0; s < MAX_STEPS; s++) paintCell(r.cells[s], t, s);
 }
 
@@ -40,6 +48,7 @@ function rebuild(): void {
   root.textContent = '';
   rows.clear();
   heads.clear();
+  closeMenu();
   const frag = document.createDocumentFragment();
   for (const t of state.pattern.tracks) {
     const row = document.createElement('div');
@@ -63,7 +72,20 @@ function rebuild(): void {
       len.value = String(v);
       send({ type: 'modifyTrack', track: t.id, props: { length: v } });
     });
-    label.append(swatch, name, len);
+    const mkBtn = (txt: string, title: string, prop: 'mute' | 'solo'): HTMLButtonElement => {
+      const b = document.createElement('button');
+      b.className = 'ms';
+      b.textContent = txt;
+      b.title = title;
+      b.addEventListener('click', () => {
+        const cur = trackById(t.id);
+        if (cur) send({ type: 'modifyTrack', track: t.id, props: { [prop]: !cur[prop] } });
+      });
+      return b;
+    };
+    const mute = mkBtn('M', 'Mute', 'mute');
+    const solo = mkBtn('S', 'Solo', 'solo');
+    label.append(swatch, name, mute, solo, len);
 
     const cellsEl = document.createElement('div');
     cellsEl.className = 'cells';
@@ -78,7 +100,7 @@ function rebuild(): void {
     }
     row.append(label, cellsEl);
     frag.appendChild(row);
-    rows.set(t.id, { row, label, name, swatch, len, cells });
+    rows.set(t.id, { row, label, name, swatch, len, mute, solo, cells });
     paintRow(t);
   }
   root.appendChild(frag);
@@ -118,7 +140,6 @@ interface Gesture {
   gestureId: number;
 }
 let gesture: Gesture | null = null;
-let gestureSeq = 0; // tags one drag so the native side records a single undo step
 let velRaf = 0;
 let pendingVel: { id: number; step: number; velocity: number; gesture: number } | null = null;
 
@@ -133,18 +154,18 @@ function flushVelocity(): void {
 function onPointerDown(e: PointerEvent): void {
   const el = (e.target as HTMLElement).closest<HTMLElement>('.cell');
   if (el) {
-    if (e.button !== 0 || gesture) return;
+    if (e.button !== 0 || e.ctrlKey || gesture) return; // ctrl+click is a context click on macOS
     const id = Number(el.dataset.t);
     const step = Number(el.dataset.s);
     const t = trackById(id);
     if (!t) return;
     select(id);
-    gesture = { id, step, pointer: e.pointerId, startY: e.clientY, startVel: t.steps[step].velocity, wasActive: t.steps[step].active, dragging: false, gestureId: ++gestureSeq };
+    gesture = { id, step, pointer: e.pointerId, startY: e.clientY, startVel: t.steps[step].velocity, wasActive: t.steps[step].active, dragging: false, gestureId: nextGesture() };
     root.setPointerCapture(e.pointerId);
     return;
   }
   const label = (e.target as HTMLElement).closest<HTMLElement>('.row');
-  if (label && !(e.target as HTMLElement).closest('input')) select(Number(label.dataset.t));
+  if (label && !(e.target as HTMLElement).closest('input,button')) select(Number(label.dataset.t));
 }
 
 function onPointerMove(e: PointerEvent): void {
@@ -193,6 +214,16 @@ export function mountGrid(el: HTMLElement): void {
   root.addEventListener('pointermove', onPointerMove);
   root.addEventListener('pointerup', onPointerUp);
   root.addEventListener('pointercancel', onPointerCancel);
+  root.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const cell = (e.target as HTMLElement).closest<HTMLElement>('.cell');
+    const row = (e.target as HTMLElement).closest<HTMLElement>('.row');
+    if (!row) return;
+    const id = Number(row.dataset.t);
+    select(id);
+    if (cell) openStepMenu(e.clientX, e.clientY, id, Number(cell.dataset.s));
+    else openTrackMenu(e.clientX, e.clientY, id);
+  });
   onChange((c: Change) => {
     switch (c.kind) {
       case 'rebuild': rebuild(); break;
