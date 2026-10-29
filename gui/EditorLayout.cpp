@@ -26,8 +26,9 @@ void EditorLayout::update(float w, float h, int tracks, int stepCount, bool conf
     auto take = [&](float cw, float gap) { const Rect r{x, cy, cw, kCtlH}; x += cw + gap; return r; };
     undo = take(28, 4);
     redo = take(28, 12);
-    enable = take(40, 8);
-    patternName = take(100, 12);
+    enable = take(40, 4);
+    audition = take(28, 8);
+    patternName = take(68, 12);
     trackName = take(90, 6);
     resLabel = take(26, 0);
     resolution = take(64, 12);
@@ -162,7 +163,7 @@ Hit EditorLayout::hitTest(float x, float y, Popup popup) const noexcept
 
     if (y < kToolbarH) {
         const std::pair<const Rect*, Item> items[] = {
-            {&undo, Item::Undo}, {&redo, Item::Redo}, {&enable, Item::Enable}, {&resolution, Item::Resolution},
+            {&undo, Item::Undo}, {&redo, Item::Redo}, {&enable, Item::Enable}, {&audition, Item::Audition}, {&resolution, Item::Resolution},
             {&swing, Item::Swing}, {&removeTrack, Item::RemoveTrack}, {&addTrack, Item::AddTrack},
             {&settings, Item::Settings}, {&help, Item::Help},
         };

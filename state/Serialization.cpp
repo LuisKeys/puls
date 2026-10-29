@@ -174,6 +174,7 @@ json settingsToJson(const Settings& s)
     json j;
     j["anchorMode"] = s.anchorMode == AnchorMode::HostAbsolute ? "host" : "restart";
     j["enabled"] = s.enabled;
+    j["audition"] = s.audition;
     j["patternSwitch"] = s.patternSwitch == SwitchQuantize::Now ? "now" : s.patternSwitch == SwitchQuantize::Beat ? "beat" : "bar";
     return j;
 }
@@ -227,7 +228,7 @@ bool readSettings(const json& j, Settings& out, std::string& err)
         else if (q == "bar") out.patternSwitch = SwitchQuantize::Bar;
         else { err = "patternSwitch: expected \"now\", \"beat\" or \"bar\""; return false; }
     }
-    return readBool(j, "enabled", out.enabled, err);
+    return readBool(j, "enabled", out.enabled, err) && readBool(j, "audition", out.audition, err);
 }
 
 json bankSummaryToJson(const Model& m)

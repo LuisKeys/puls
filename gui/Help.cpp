@@ -7,6 +7,7 @@ namespace {
 
 const HelpRow kSteps[] = {
     {"Click", "Toggle a step"},
+    {"Toolbar \xE2\x99\xAA", "Preview: play a track's note when one of its steps is switched on (click to turn off)"},
     {"Drag up / down on an active step", "Set its velocity (brighter = louder)"},
     {"Right-click or Ctrl+click", "Step menu: probability, ratchets, micro-timing, gate, clear"},
     {"Markers", "Number = ratchets, dashed top = probability < 100 %, side bar = early / late"},

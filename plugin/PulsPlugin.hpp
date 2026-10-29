@@ -1,5 +1,6 @@
 #pragma once
 #include "DistrhoPlugin.hpp"
+#include "Auditioner.hpp"
 #include "Bridge.hpp"
 #include "Model.hpp"
 #include "PatternSwitcher.hpp"
@@ -71,10 +72,12 @@ private:
     // Main thread -> audio thread.
     puls::SnapshotExchange<puls::EngineSnapshot> fExchange;
     puls::SpscQueue<puls::SwitchRequest, 16>     fSwitchQueue;
+    puls::SpscQueue<puls::AuditionNote, 64>      fAuditionQueue;
 
     // Audio thread only.
     puls::Sequencer      fSeq;
     puls::PatternSwitcher fSwitcher;
+    puls::Auditioner     fAudition;
 
     // Transport trace (audio thread -> main thread). Off unless PULS_TRACE is set when the plugin is created.
     struct TraceRecord {

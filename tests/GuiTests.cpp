@@ -100,6 +100,8 @@ TEST(toolbar_and_bank_fit_the_minimum_width)
     }
     CHECK(l.hitTest(l.undo.cx(), l.undo.cy(), Popup::None).item == Item::Undo);
     CHECK(l.hitTest(l.addTrack.cx(), l.addTrack.cy(), Popup::None).item == Item::AddTrack);
+    CHECK(l.hitTest(l.audition.cx(), l.audition.cy(), Popup::None).item == Item::Audition);
+    CHECK(l.enable.right() <= l.audition.x && l.audition.right() <= l.patternName.x);
 }
 
 TEST(open_popups_own_the_pointer)

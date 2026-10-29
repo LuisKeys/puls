@@ -1,5 +1,6 @@
 #include "TestFramework.hpp"
 #include "TestHelpers.hpp"
+#include "Auditioner.hpp"
 #include "PatternSwitcher.hpp"
 #include "Snapshot.hpp"
 #include "SnapshotExchange.hpp"
@@ -735,6 +736,66 @@ TEST(real_stops_and_relocations_still_restart_the_grid)
     r = runHost(94 * 4, B, [&](int b) { return std::make_pair(true, double(b % 94) * B); });
     CHECK_EQ(countKind(r, Sequencer::BlockKind::Jumped), 3);
     CHECK_EQ(countKind(r, Sequencer::BlockKind::Resynced), 0);
+}
+
+TEST(auditioner_plays_fixed_length_previews_with_exact_note_offs)
+{
+    Auditioner a;
+    a.begin();
+    a.trigger(AuditionNote{9, 36, 100}, 700);
+    a.advance(512);
+    CHECK_EQ(a.eventCount(), 1u);
+    CHECK(a.events()[0].isNoteOn());
+    CHECK_EQ((int)a.events()[0].data[0], 0x99);
+    CHECK_EQ(a.events()[0].frame, 0u);
+    a.begin();
+    a.advance(512);                               // the off lands at 700 - 512 = 188 into the second block
+    CHECK_EQ(a.eventCount(), 1u);
+    CHECK(a.events()[0].isNoteOff());
+    CHECK_EQ(a.events()[0].frame, 188u);
+    CHECK_EQ(a.soundingNotes(), 0);
+
+    // A short note ends inside its own block, after its note-on.
+    a.begin();
+    a.trigger(AuditionNote{0, 38, 0}, 100);
+    a.advance(512);
+    CHECK_EQ(a.eventCount(), 2u);
+    CHECK(a.events()[0].isNoteOn());
+    CHECK_EQ((int)a.events()[0].data[2], 1);    // velocity is clamped to 1..127
+    CHECK(a.events()[1].isNoteOff());
+    CHECK_EQ(a.events()[1].frame, 100u);
+}
+
+TEST(auditioner_retriggers_steals_and_keeps_events_sorted)
+{
+    Auditioner a;
+    a.begin();
+    a.trigger(AuditionNote{0, 36, 90}, 1000);
+    a.advance(256);
+    a.begin();
+    a.trigger(AuditionNote{0, 36, 80}, 1000);   // same note again: off first, then on
+    a.advance(256);
+    CHECK_EQ(a.eventCount(), 2u);
+    CHECK(a.events()[0].isNoteOff());
+    CHECK(a.events()[1].isNoteOn());
+    CHECK_EQ(a.soundingNotes(), 1);
+
+    a.reset();
+    a.begin();
+    for (int n = 0; n < Auditioner::kMaxVoices + 4; ++n) a.trigger(AuditionNote{0, uint8_t(40 + n), 100}, 1000 + n * 10);
+    a.advance(512);
+    CHECK(a.soundingNotes() <= Auditioner::kMaxVoices);
+    int ons = 0, offs = 0;
+    for (uint32_t i = 0; i < a.eventCount(); ++i) {
+        if (i > 0) CHECK(a.events()[i - 1].frame <= a.events()[i].frame);
+        a.events()[i].isNoteOn() ? ++ons : ++offs;
+    }
+    CHECK_EQ(ons, Auditioner::kMaxVoices + 4);
+    CHECK_EQ(offs, 4);                            // the stolen voices; the rest end after this block
+    // Everything that started ends: no stuck previews.
+    for (int b = 0; b < 4; ++b) { a.begin(); a.advance(512); offs += a.eventCount(); }
+    CHECK_EQ(offs, ons);
+    CHECK_EQ(a.soundingNotes(), 0);
 }
 
 int main() { return testfw::runAll(); }

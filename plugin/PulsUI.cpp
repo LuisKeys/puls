@@ -678,6 +678,13 @@ private:
             send(cmd::setSettings(s));
             break;
         }
+        case Item::Audition:
+        {
+            puls::Settings s = model().settings;
+            s.audition = !s.audition;
+            send(cmd::setSettings(s));
+            break;
+        }
         case Item::Resolution:
             if (selectedTrack() != nullptr) fPopup = Popup::Resolution;
             break;
@@ -914,6 +921,7 @@ private:
         button(fL.undo, "\xE2\x86\xB6", m.history.canUndo(), false, hovered(Item::Undo), 15.0f);   // ↶
         button(fL.redo, "\xE2\x86\xB7", m.history.canRedo(), false, hovered(Item::Redo), 15.0f);   // ↷
         button(fL.enable, "On", true, m.settings.enabled, hovered(Item::Enable));
+        button(fL.audition, "\xE2\x99\xAA", true, m.settings.audition, hovered(Item::Audition), 14.0f);   // ♪
         clippedLabel(fL.patternName, p.name, col::text2);
         clippedLabel(fL.trackName, t ? t->name : "", col::text2);
 
