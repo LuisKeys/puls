@@ -1,0 +1,17 @@
+{
+  "attribution": false,
+  "permissions": {
+    "allow": [
+      "Bash(scripts/build.sh)",
+      "Bash(scripts/validate.sh)",
+      "Bash(npm run build:*)",
+      "Bash(npm run typecheck:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": [
+      "Edit(external/dpf/**)"
+    ]
+  }
+}
