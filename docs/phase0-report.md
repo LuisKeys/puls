@@ -1,5 +1,7 @@
 # Phase 0 report (feasibility spike)
 
+> Historical record. The WebView/TypeScript UI described here was replaced by a native DGL/NanoVG editor and `ui/` was removed (DECISIONS.md, ADR-014..017).
+
 Pinned: DPF `4238e1c7f0351bbe488d79f0899c540543ac7583` (+ nested pugl `5e2621d7`), Vite 6.3.5, TypeScript 5.8.3.
 
 ## Verified (macOS arm64, headless)

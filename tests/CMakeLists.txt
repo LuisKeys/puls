@@ -26,7 +26,7 @@ target_link_libraries(bridge_tests puls_app)
 target_compile_options(bridge_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
 add_test(NAME bridge COMMAND bridge_tests)
 
-add_library(puls_gui STATIC ../gui/EditorLayout.cpp ../gui/Commands.cpp ../gui/Menu.cpp ../gui/Selection.cpp)
+add_library(puls_gui STATIC ../gui/EditorLayout.cpp ../gui/Commands.cpp ../gui/Menu.cpp ../gui/Selection.cpp ../gui/Help.cpp)
 target_include_directories(puls_gui PUBLIC ../gui)
 target_link_libraries(puls_gui PUBLIC puls_app)
 target_compile_options(puls_gui PRIVATE -Wall -Wextra -Wno-unused-parameter)

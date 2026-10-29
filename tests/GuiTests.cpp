@@ -2,6 +2,7 @@
 #include "Bridge.hpp"
 #include "Commands.hpp"
 #include "EditorLayout.hpp"
+#include "Help.hpp"
 #include "Menu.hpp"
 #include "Selection.hpp"
 #include "TextEdit.hpp"
@@ -432,6 +433,36 @@ TEST(the_cursor_is_scrolled_into_view)
     c = l.cell(0, 0);
     CHECK(c.x >= l.cells.x - 0.01f);
     CHECK(c.y >= l.grid.y - 0.01f);
+}
+
+// ---- help ----
+
+TEST(help_panel_is_centered_and_scrolls_its_measured_content)
+{
+    HelpLayout h;
+    h.update(EditorLayout::kMinWidth, EditorLayout::kMinHeight);
+    CHECK(h.panel.w <= HelpLayout::kMaxW);
+    CHECK(h.panel.x >= 0 && h.panel.right() <= EditorLayout::kMinWidth);
+    CHECK(h.panel.bottom() <= EditorLayout::kMinHeight);
+    CHECK(h.body.bottom() <= h.panel.bottom());
+    CHECK(h.hitTest(h.close.cx(), h.close.cy()) == HelpHit::Close);
+    CHECK(h.hitTest(h.body.cx(), h.body.cy()) == HelpHit::Panel);
+    CHECK(h.hitTest(2, 2) == HelpHit::Outside);
+
+    h.scrollBy(100);
+    CHECK(h.scroll == 0.0f);                   // nothing measured yet: nothing to scroll
+    h.setContentHeight(h.body.h + 300);
+    h.scrollBy(1000);
+    CHECK(h.scroll == 300.0f);
+    h.update(900, 2000);                       // a taller window shows everything: the scroll resets
+    CHECK(h.scroll == 0.0f);
+
+    int rows = 0;
+    for (int i = 0; i < kHelpSectionCount; ++i) {
+        CHECK(kHelpSections[i].count > 0);
+        rows += kHelpSections[i].count;
+    }
+    CHECK(rows > 20);
 }
 
 int main() { return testfw::runAll(); }
