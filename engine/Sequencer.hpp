@@ -26,8 +26,13 @@ public:
 
     void setAnchorMode(AnchorMode m) noexcept { anchorMode_ = m; }
 
-    // Fills events() for this block.
-    void process(const Pattern& pattern, const TransportInfo& transport, uint32_t frames) noexcept;
+    // Fills events() for this block. If `next` is given, every event whose time is >= `switchAt` (musical units,
+    // see Timing.hpp; INT64_MIN = immediately) is generated from `next` instead of `pattern`. The step grid is not
+    // re-anchored, so the choice depends only on each event's own time and the output is identical for any block
+    // size. switchCommitted() tells the caller that the block's window reached switchAt (`next` is now current).
+    void process(const Pattern& pattern, const TransportInfo& transport, uint32_t frames,
+                 const Pattern* next = nullptr, int64_t switchAt = 0) noexcept;
+    bool switchCommitted() const noexcept { return switchCommitted_; }
 
     // Clears events() and fills it with note-offs (frame 0) for every sounding note.
     // For lifecycle changes (deactivate, pattern replacement).
@@ -64,6 +69,7 @@ private:
 
     AnchorMode anchorMode_ = AnchorMode::RestartOnStart;
     bool       wasPlaying_ = false;
+    bool       switchCommitted_ = false;
     int64_t    lastEnd_ = 0;
     int64_t    lastHi_ = 0;
     int64_t    anchor_ = 0;

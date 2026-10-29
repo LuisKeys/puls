@@ -2,8 +2,10 @@
 #include "DistrhoPlugin.hpp"
 #include "Bridge.hpp"
 #include "Model.hpp"
+#include "PatternSwitcher.hpp"
 #include "Sequencer.hpp"
 #include "SnapshotExchange.hpp"
+#include "SpscQueue.hpp"
 #include <atomic>
 #include <mutex>
 #include <string>
@@ -25,6 +27,7 @@ public:
     std::atomic<bool>   telBbtValid{false};
     std::atomic<int8_t> telPlayhead[puls::kMaxTracks];   // step index per track, -1 when stopped
     std::atomic<uint8_t> telTrackCount{0};
+    std::atomic<int8_t>  telPlayingPattern{0};           // bank slot the sequencer is playing
 
     // Main-thread outbox, drained by the UI in uiIdle.
     std::vector<std::string> drainOutbox();
@@ -58,9 +61,11 @@ private:
 
     // Main thread -> audio thread.
     puls::SnapshotExchange<puls::EngineSnapshot> fExchange;
+    puls::SpscQueue<puls::SwitchRequest, 16>     fSwitchQueue;
 
     // Audio thread only.
-    puls::Sequencer fSeq;
+    puls::Sequencer      fSeq;
+    puls::PatternSwitcher fSwitcher;
 };
 
 END_NAMESPACE_DISTRHO

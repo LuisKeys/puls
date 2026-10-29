@@ -1,10 +1,11 @@
-import { MAX_STEPS, type NativeEvent, type Pattern, type Settings, type Step, type Track, type WirePattern, type WireStep, type WireTrack } from './types';
+import { MAX_STEPS, type BankSlot, type NativeEvent, type Pattern, type Settings, type Step, type Track, type WirePattern, type WireStep, type WireTrack } from './types';
 
 export type Change =
   | { kind: 'rebuild' } // init / patternChanged: structure may differ
   | { kind: 'track'; id: number }
   | { kind: 'step'; id: number; step: number }
   | { kind: 'settings' }
+  | { kind: 'bank' }
   | { kind: 'history' }
   | { kind: 'selection' }
   | { kind: 'transport' }
@@ -27,8 +28,12 @@ function normalizePattern(w: WirePattern): Pattern {
 
 export const state = {
   pattern: { name: '', seed: 1, tracks: [] } as Pattern,
-  settings: { anchorMode: 'restart', enabled: true } as Settings,
+  settings: { anchorMode: 'restart', enabled: true, patternSwitch: 'bar' } as Settings,
   selected: 0, // track id
+  bank: [] as BankSlot[],
+  selectedPattern: 0, // bank slot being viewed/edited
+  playingPattern: 0, // bank slot the sequencer plays (a switch may still be queued)
+  hasClipboard: false,
   loaded: false,
   canUndo: false,
   canRedo: false,
@@ -61,17 +66,39 @@ export function applyEvent(ev: NativeEvent): void {
     case 'init':
       state.pattern = normalizePattern(ev.pattern);
       state.settings = ev.settings;
+      state.bank = ev.bank;
+      state.selectedPattern = ev.selected;
+      state.hasClipboard = ev.hasClipboard;
       state.loaded = true;
       state.canUndo = ev.canUndo;
       state.canRedo = ev.canRedo;
       keepSelection();
       emit({ kind: 'rebuild' });
       emit({ kind: 'settings' });
+      emit({ kind: 'bank' });
       break;
     case 'patternChanged':
       state.pattern = normalizePattern(ev.pattern);
+      state.selectedPattern = ev.selected;
       keepSelection();
       emit({ kind: 'rebuild' });
+      emit({ kind: 'bank' });
+      break;
+    case 'bankChanged':
+      state.bank = ev.bank;
+      emit({ kind: 'bank' });
+      break;
+    case 'clipboard':
+      state.hasClipboard = ev.hasPattern;
+      emit({ kind: 'bank' });
+      break;
+    case 'stepsChanged':
+      for (const c of ev.cells) {
+        const t = trackById(c.track);
+        if (!t) continue;
+        t.steps[c.step] = normalizeStep(c.data);
+        emit({ kind: 'step', id: t.id, step: c.step });
+      }
       break;
     case 'trackChanged': {
       const t = trackById(ev.track.id);
@@ -105,6 +132,10 @@ export function applyEvent(ev: NativeEvent): void {
     case 'playheads':
       state.playheads = ev.steps;
       emit({ kind: 'playheads' });
+      if (state.playingPattern !== ev.pattern) {
+        state.playingPattern = ev.pattern;
+        emit({ kind: 'bank' });
+      }
       break;
     case 'error':
       emit({ kind: 'error', message: ev.message });

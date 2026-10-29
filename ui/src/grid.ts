@@ -1,7 +1,7 @@
 import { send, nextGesture } from './bridge';
-import { openStepMenu, openTrackMenu, closeMenu } from './menu';
-import { onChange, select, state, trackById, type Change } from './state';
-import { MAX_STEPS, type Step, type Track } from './types';
+import { isMenuOpen, openStepMenu, openTrackMenu, closeMenu } from './menu';
+import { DEFAULT_STEP, onChange, select, state, trackById, type Change } from './state';
+import { MAX_STEPS, type Step, type StepEdit, type Track } from './types';
 
 const DRAG_THRESHOLD_PX = 4;
 const VELOCITY_PER_PX = 0.8;
@@ -49,6 +49,8 @@ function rebuild(): void {
   rows.clear();
   heads.clear();
   closeMenu();
+  cursor = anchor = null;
+  selCells = [];
   const frag = document.createDocumentFragment();
   for (const t of state.pattern.tracks) {
     const row = document.createElement('div');
@@ -105,6 +107,7 @@ function rebuild(): void {
   }
   root.appendChild(frag);
   paintSelection();
+  paintCursor();
   schedulePlayheads();
 }
 
@@ -116,7 +119,8 @@ function schedulePlayheads(): void {
     headRaf = 0;
     state.pattern.tracks.forEach((t, i) => {
       const r = rows.get(t.id);
-      const pos = state.playheads[i] ?? -1;
+      // Playheads belong to the pattern that is playing; hide them while another one is being viewed.
+      const pos = state.playingPattern === state.selectedPattern ? (state.playheads[i] ?? -1) : -1;
       const next = r && pos >= 0 ? r.cells[pos] : undefined;
       const prev = heads.get(t.id);
       if (prev === next) return;
@@ -126,6 +130,138 @@ function schedulePlayheads(): void {
       else heads.delete(t.id);
     });
   });
+}
+
+// ---- cursor, multi-selection and clipboard (keyboard works only while the WebView has focus) ----
+interface Pos { track: number; step: number } // track is an index into the pattern's tracks
+let cursor: Pos | null = null;
+let anchor: Pos | null = null;
+let selCells: HTMLElement[] = [];
+let clip: Step[][] | null = null; // rows = tracks, columns = steps
+
+interface Rect { t0: number; t1: number; s0: number; s1: number }
+function selRect(): Rect | null {
+  if (!cursor || !anchor) return null;
+  return {
+    t0: Math.min(cursor.track, anchor.track), t1: Math.max(cursor.track, anchor.track),
+    s0: Math.min(cursor.step, anchor.step), s1: Math.max(cursor.step, anchor.step),
+  };
+}
+
+function cellAt(p: Pos): HTMLElement | undefined {
+  const t = state.pattern.tracks[p.track];
+  return t ? rows.get(t.id)?.cells[p.step] : undefined;
+}
+
+function paintCursor(): void {
+  for (const c of selCells) c.classList.remove('sel', 'cur');
+  selCells = [];
+  const r = selRect();
+  if (!r) return;
+  const multi = r.t1 > r.t0 || r.s1 > r.s0;
+  for (let ti = r.t0; ti <= r.t1; ti++)
+    for (let s = r.s0; s <= r.s1; s++) {
+      const c = cellAt({ track: ti, step: s });
+      if (!c) continue;
+      if (multi) c.classList.add('sel');
+      selCells.push(c);
+    }
+  const cur = cursor && cellAt(cursor);
+  if (cur) {
+    cur.classList.add('cur');
+    selCells.push(cur);
+    cur.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+}
+
+function selectedCells(): { t: Track; step: number }[] {
+  const r = selRect();
+  const out: { t: Track; step: number }[] = [];
+  if (!r) return out;
+  for (let ti = r.t0; ti <= r.t1; ti++) {
+    const t = state.pattern.tracks[ti];
+    if (t) for (let s = r.s0; s <= r.s1; s++) out.push({ t, step: s });
+  }
+  return out;
+}
+
+function editCells(cells: StepEdit[]): void {
+  if (cells.length > 0) send({ type: 'editSteps', cells });
+}
+
+function copySelection(): boolean {
+  const r = selRect();
+  if (!r) return false;
+  clip = [];
+  for (let ti = r.t0; ti <= r.t1; ti++) {
+    const t = state.pattern.tracks[ti];
+    clip.push(t ? t.steps.slice(r.s0, r.s1 + 1).map((s) => ({ ...s })) : []);
+  }
+  return true;
+}
+
+function pasteClipboard(): void {
+  const r = selRect();
+  if (!clip || !r) return;
+  const cells: StepEdit[] = [];
+  clip.forEach((row, dt) => {
+    const t = state.pattern.tracks[r.t0 + dt];
+    if (!t) return;
+    row.forEach((st, ds) => {
+      if (r.s0 + ds < MAX_STEPS) cells.push({ track: t.id, step: r.s0 + ds, props: { ...st } });
+    });
+  });
+  editCells(cells);
+  const lastT = Math.min(state.pattern.tracks.length - 1, r.t0 + clip.length - 1);
+  const width = Math.max(...clip.map((row) => row.length), 1);
+  anchor = { track: r.t0, step: r.s0 };
+  cursor = { track: lastT, step: Math.min(MAX_STEPS - 1, r.s0 + width - 1) };
+  paintCursor();
+}
+
+function onKeyDown(e: KeyboardEvent): void {
+  const el = e.target as HTMLElement;
+  if (isMenuOpen() || el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA' || el.tagName === 'BUTTON') return;
+  const mod = e.metaKey || e.ctrlKey;
+  const tracks = state.pattern.tracks;
+  if (tracks.length === 0) return;
+  const k = e.key;
+  let handled = true;
+
+  if (k.startsWith('Arrow')) {
+    if (!cursor) {
+      const ti = Math.max(0, tracks.findIndex((t) => t.id === state.selected));
+      cursor = anchor = { track: ti, step: 0 };
+    } else {
+      const next = {
+        track: Math.max(0, Math.min(tracks.length - 1, cursor.track + (k === 'ArrowDown' ? 1 : k === 'ArrowUp' ? -1 : 0))),
+        step: Math.max(0, Math.min(MAX_STEPS - 1, cursor.step + (k === 'ArrowRight' ? 1 : k === 'ArrowLeft' ? -1 : 0))),
+      };
+      cursor = next;
+      if (!e.shiftKey) anchor = next;
+      select(tracks[next.track].id);
+    }
+    paintCursor();
+  } else if (k === 'Escape') {
+    if (cursor) anchor = cursor;
+    paintCursor();
+  } else if (k === ' ' || k === 'Enter') {
+    const sel = selectedCells();
+    const allOn = sel.length > 0 && sel.every((c) => c.t.steps[c.step].active);
+    editCells(sel.map((c) => ({ track: c.t.id, step: c.step, props: { active: !allOn } })));
+  } else if (k === 'Delete' || k === 'Backspace') {
+    editCells(selectedCells().map((c) => ({ track: c.t.id, step: c.step, props: { ...DEFAULT_STEP } })));
+  } else if (mod && k.toLowerCase() === 'c') {
+    handled = copySelection();
+  } else if (mod && k.toLowerCase() === 'x') {
+    if (copySelection()) editCells(selectedCells().map((c) => ({ track: c.t.id, step: c.step, props: { ...DEFAULT_STEP } })));
+  } else if (mod && k.toLowerCase() === 'v') {
+    handled = clip !== null && cursor !== null;
+    pasteClipboard();
+  } else {
+    handled = false;
+  }
+  if (handled) e.preventDefault();
 }
 
 // ---- pointer gestures: click toggles, vertical drag past a threshold edits velocity ----
@@ -160,6 +296,15 @@ function onPointerDown(e: PointerEvent): void {
     const t = trackById(id);
     if (!t) return;
     select(id);
+    const ti = state.pattern.tracks.findIndex((x) => x.id === id);
+    if (e.shiftKey && cursor) {
+      cursor = { track: ti, step };
+      paintCursor();
+      e.preventDefault();
+      return; // shift+click extends the selection instead of toggling
+    }
+    cursor = anchor = { track: ti, step };
+    paintCursor();
     gesture = { id, step, pointer: e.pointerId, startY: e.clientY, startVel: t.steps[step].velocity, wasActive: t.steps[step].active, dragging: false, gestureId: nextGesture() };
     root.setPointerCapture(e.pointerId);
     return;
@@ -214,6 +359,7 @@ export function mountGrid(el: HTMLElement): void {
   root.addEventListener('pointermove', onPointerMove);
   root.addEventListener('pointerup', onPointerUp);
   root.addEventListener('pointercancel', onPointerCancel);
+  window.addEventListener('keydown', onKeyDown);
   root.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const cell = (e.target as HTMLElement).closest<HTMLElement>('.cell');

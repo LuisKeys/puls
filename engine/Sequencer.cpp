@@ -136,9 +136,11 @@ void Sequencer::generate(const Pattern& p, int64_t lo, int64_t hi, uint32_t& ord
     }
 }
 
-void Sequencer::process(const Pattern& pattern, const TransportInfo& tp, uint32_t frames) noexcept
+void Sequencer::process(const Pattern& pattern, const TransportInfo& tp, uint32_t frames,
+                        const Pattern* next, int64_t switchAt) noexcept
 {
     eventCount_ = 0;
+    switchCommitted_ = false;
 
     const bool valid = tp.playing && frames > 0 && tp.bpm > 0.0 && tp.sampleRate > 0.0
                        && std::isfinite(tp.quarterPos) && std::isfinite(tp.bpm) && tp.quarterPos >= 0.0;
@@ -177,7 +179,14 @@ void Sequencer::process(const Pattern& pattern, const TransportInfo& tp, uint32_
     updatePlayheads(pattern, t0);
 
     uint32_t n = 0, order = 0;
-    generate(pattern, lo, hi, order, n);
+    if (next != nullptr && switchAt < hi) {
+        const int64_t cut = std::min(std::max(switchAt, lo), hi);
+        if (cut > lo) generate(pattern, lo, cut, order, n);
+        generate(*next, cut, hi, order, n);
+        switchCommitted_ = true;
+    } else {
+        generate(pattern, lo, hi, order, n);
+    }
 
     // Merge in note-offs that were scheduled by earlier blocks and fall into this one.
     uint32_t keep = 0;

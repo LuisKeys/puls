@@ -13,6 +13,9 @@
   --rh: 30px;
 }
 * { box-sizing: border-box; }
+/* An instrument, not a document: nothing should highlight when clicking or dragging (WKWebView needs the -webkit- form). */
+html, body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; cursor: default; }
+input[type=text], input[type=number] { -webkit-user-select: text; user-select: text; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 12px -apple-system, system-ui, sans-serif; overflow: hidden; }
 #app { display: flex; flex-direction: column; height: 100%; }
 .dim { color: var(--text2); }
@@ -73,3 +76,24 @@ label { display: inline-flex; align-items: center; gap: 6px; color: var(--text2)
 .mrow input[type=text], .mrow select { flex: 1; min-width: 0; padding: 2px 4px; }
 .mrow input[type=color] { width: 40px; height: 22px; padding: 0; }
 .menu > button { margin-top: 6px; }
+
+.maction { display: block; width: 100%; margin-top: 4px; text-align: left; }
+.settings label { display: flex; justify-content: space-between; gap: 12px; margin: 4px 0; }
+
+#bank { display: flex; align-items: center; gap: 4px; padding: 6px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.slot { position: relative; min-width: 26px; padding: 3px 0; color: var(--text2); font-variant-numeric: tabular-nums; }
+.slot.used { color: var(--text); }
+.slot.sel { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+.slot.playing::after { content: ''; position: absolute; top: 2px; right: 2px; width: 5px; height: 5px; border-radius: 50%; background: #79d86a; }
+.pname { margin-left: 8px; }
+
+.cell { scroll-margin-left: var(--label-w); }
+.cell.sel { border-color: rgba(80, 186, 241, 0.6); }
+.cell.cur { border-color: var(--accent); }
+
+button, select, .slot, .label, .ms { cursor: pointer; }
+.cell { cursor: pointer; }
+.cell.on { cursor: ns-resize; } /* active steps: click toggles, vertical drag sets velocity */
+input[type=text], input[type=number] { cursor: text; }
+input[type=range] { cursor: ew-resize; }
+button:disabled { cursor: default; }

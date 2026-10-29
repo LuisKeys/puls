@@ -2,6 +2,7 @@
 export const BRIDGE_VERSION = 1;
 export const MAX_STEPS = 64;
 export const MAX_TRACKS = 16;
+export const BANK_SIZE = 16;
 
 export const RESOLUTIONS = ['1/4', '1/8', '1/16', '1/32', '1/64', '1/8T', '1/16T', '1/32T'] as const;
 export type Resolution = (typeof RESOLUTIONS)[number];
@@ -42,9 +43,23 @@ export interface Pattern {
   tracks: Track[];
 }
 
+export type SwitchQuantize = 'now' | 'beat' | 'bar';
+
 export interface Settings {
   anchorMode: 'restart' | 'host';
   enabled: boolean;
+  patternSwitch: SwitchQuantize;
+}
+
+export interface BankSlot {
+  name: string;
+  used: boolean; // has at least one active step
+}
+
+export interface StepEdit {
+  track: number;
+  step: number;
+  props: Partial<Step>;
 }
 
 // Wire form: steps are sparse (defaults omitted, trailing defaults dropped).
@@ -65,16 +80,23 @@ export type Command =
   | { version: 1; type: 'addTrack'; props?: Partial<TrackProps> }
   | { version: 1; type: 'removeTrack'; track: number }
   | { version: 1; type: 'setSettings'; settings: Partial<Settings> }
+  | { version: 1; type: 'editSteps'; cells: StepEdit[] }
+  | { version: 1; type: 'selectPattern'; index: number; quantize?: SwitchQuantize }
+  | { version: 1; type: 'renamePattern'; index: number; name: string }
+  | { version: 1; type: 'copyPattern' | 'pastePattern' | 'duplicatePattern' | 'clearPattern'; index: number }
   | { version: 1; type: 'undo' }
   | { version: 1; type: 'redo' };
 
 export type NativeEvent =
-  | { version: 1; type: 'init'; pattern: WirePattern; settings: Settings; canUndo: boolean; canRedo: boolean }
-  | { version: 1; type: 'patternChanged'; pattern: WirePattern }
+  | { version: 1; type: 'init'; pattern: WirePattern; selected: number; bank: BankSlot[]; settings: Settings; canUndo: boolean; canRedo: boolean; hasClipboard: boolean }
+  | { version: 1; type: 'patternChanged'; pattern: WirePattern; selected: number }
+  | { version: 1; type: 'bankChanged'; bank: BankSlot[] }
+  | { version: 1; type: 'clipboard'; hasPattern: boolean }
+  | { version: 1; type: 'stepsChanged'; cells: { track: number; step: number; data: WireStep }[] }
   | { version: 1; type: 'trackChanged'; track: { id: number } & TrackProps }
   | { version: 1; type: 'stepChanged'; track: number; step: number; data: WireStep }
   | { version: 1; type: 'settings'; settings: Settings }
   | { version: 1; type: 'history'; canUndo: boolean; canRedo: boolean }
   | { version: 1; type: 'transport'; playing: boolean; bpm: number; quarter: number }
-  | { version: 1; type: 'playheads'; steps: number[] }
+  | { version: 1; type: 'playheads'; steps: number[]; pattern: number }
   | { version: 1; type: 'error'; command?: string; message: string };

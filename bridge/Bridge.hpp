@@ -6,26 +6,35 @@
 namespace puls {
 
 constexpr int kBridgeVersion = 1;
+constexpr size_t kMaxBatchCells = 1024;
 
 // Parses and validates UI commands against the Model and produces native->UI events (JSON strings).
-// Main thread only. Never touches the audio thread: the caller republishes a snapshot when `changed`.
+// Main thread only. Never touches the audio thread: the caller republishes a snapshot when `changed` and
+// forwards `switchRequest` to the audio thread's queue.
 //
-// Commands (all carry "version":1):
+// Commands (all carry "version":1). They act on the selected pattern unless an "index" is given:
 //   hello
 //   toggleStep {track, step}                 setStepVelocity {track, step, velocity}
 //   modifyStep {track, step, props}          modifyTrack {track, props}
+//   editSteps {cells:[{track, step, props}]} (up to 1024 cells, atomic, one undo step)
 //   addTrack {props?}                        removeTrack {track}
-//   setSettings {settings:{anchorMode?, enabled?}}
-//   undo, redo                               (setStepVelocity, modifyStep and modifyTrack may carry a non-zero "gesture" id to coalesce a drag)
-// Events: init, stepChanged, trackChanged, patternChanged, settings, history {canUndo, canRedo}, error
-// (transport and playheads are produced by the UI side from audio-thread telemetry).
+//   setSettings {settings:{anchorMode?, enabled?, patternSwitch?}}
+//   selectPattern {index, quantize?:"now"|"beat"|"bar"}   views the pattern and requests it for playback
+//   renamePattern {index, name}   copyPattern {index}   pastePattern {index}
+//   duplicatePattern {index}      clearPattern {index}
+//   undo, redo
+// setStepVelocity, modifyStep and modifyTrack may carry a non-zero "gesture" id to coalesce a drag into one undo step.
+// Events: init, stepChanged, stepsChanged, trackChanged, patternChanged, bankChanged, settings, history,
+//         clipboard, error (transport and playheads are produced by the UI side from audio-thread telemetry).
 class Bridge {
 public:
     explicit Bridge(Model& model) : model_(model) {}
 
     struct Result {
         std::vector<std::string> events;
-        bool changed = false;   // the Model was modified (snapshot must be republished)
+        bool changed = false;          // the Model was modified (snapshot must be republished)
+        bool switchRequested = false;  // the audio thread should switch to `request`
+        SwitchRequest request;
     };
 
     Result handle(const char* json);
