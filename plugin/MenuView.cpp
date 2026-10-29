@@ -134,6 +134,12 @@ bool MenuView::mouseDown(float x, float y, const puls::Model& m)
                 close(m);
             }
             break;
+        case MenuPart::Keys: {
+            const uint32_t track = menu_.target.track;
+            close(m);
+            openKeys_(track);
+            break;
+        }
         default:
             break;
     }
@@ -240,6 +246,8 @@ void MenuView::draw(NanoVG& vg, const puls::Model& m)
                 vg.fill();
                 const std::string shown = std::to_string(v);
                 textField(vg, menu_.number(i), shown.c_str(), editField_ == i ? &text_ : nullptr, hot(MenuPart::Number, i), NanoVG::ALIGN_RIGHT);
+                if (menu_.keys(i).w > 0)
+                    pianoButton(vg, menu_.keys(i), false, hot(MenuPart::Keys, i));
                 break;
             }
             case FieldType::Text: {

@@ -3,6 +3,7 @@
 #include "Commands.hpp"
 #include "EditorLayout.hpp"
 #include "Help.hpp"
+#include "Keyboard.hpp"
 #include "Menu.hpp"
 #include "Selection.hpp"
 #include "TextEdit.hpp"
@@ -102,6 +103,9 @@ TEST(toolbar_and_bank_fit_the_minimum_width)
     CHECK(l.hitTest(l.addTrack.cx(), l.addTrack.cy(), Popup::None).item == Item::AddTrack);
     CHECK(l.hitTest(l.audition.cx(), l.audition.cy(), Popup::None).item == Item::Audition);
     CHECK(l.enable.right() <= l.audition.x && l.audition.right() <= l.patternName.x);
+    CHECK(l.hitTest(l.keys.cx(), l.keys.cy(), Popup::None).item == Item::Keys);
+    CHECK(l.trackName.right() <= l.keys.x && l.keys.right() <= l.resLabel.x);
+    CHECK(l.help.right() <= l.width);
 }
 
 TEST(open_popups_own_the_pointer)
@@ -465,6 +469,175 @@ TEST(help_panel_is_centered_and_scrolls_its_measured_content)
         rows += kHelpSections[i].count;
     }
     CHECK(rows > 20);
+}
+
+// ---- note keyboard ----
+
+TEST(note_names_follow_c3_is_60_and_gm_drums_are_named)
+{
+    CHECK(noteName(60) == "C3");
+    CHECK(noteName(36) == "C1");
+    CHECK(noteName(37) == "C#1");
+    CHECK(noteName(0) == "C-2");
+    CHECK(noteName(127) == "G8");
+    CHECK(noteName(128).empty());
+    CHECK(std::string(gmDrumName(36)) == "Bass Drum 1");
+    CHECK(std::string(gmDrumName(42)) == "Closed Hi-Hat");
+    CHECK(std::string(gmDrumName(81)) == "Open Triangle");
+    CHECK(gmDrumName(34) == nullptr && gmDrumName(82) == nullptr);
+    int black = 0;
+    for (int n = 0; n < 12; ++n) black += isBlackKey(n);
+    CHECK_EQ(black, 5);
+    CHECK(isBlackKey(61) && !isBlackKey(64) && !isBlackKey(65));
+}
+
+TEST(keyboard_fits_the_minimum_window_with_sixteen_tracks)
+{
+    KeyboardLayout k;
+    k.update(EditorLayout::kMinWidth, EditorLayout::kMinHeight, kMaxTracks);
+    CHECK(k.panel.x >= 0 && k.panel.right() <= EditorLayout::kMinWidth);
+    CHECK(k.panel.y >= 0 && k.panel.bottom() <= EditorLayout::kMinHeight);
+    CHECK(k.octaves >= 3);
+    CHECK(k.keys.h >= 60);
+    CHECK(k.chip(kMaxTracks - 1).bottom() <= k.info.y);
+    CHECK(k.chip(KeyboardLayout::kChipsPerRow - 1).right() <= k.panel.right());
+    for (int t = 0; t < kMaxTracks; ++t) {
+        const Rect c = k.chip(t);
+        const KeysHit h = k.hitTest(c.cx(), c.cy());
+        CHECK(h.part == KeysPart::Track);
+        CHECK_EQ(h.index, t);
+    }
+    CHECK(k.hitTest(k.close.cx(), k.close.cy()).part == KeysPart::Close);
+    CHECK(k.hitTest(k.prev.cx(), k.prev.cy()).part == KeysPart::Prev);
+    CHECK(k.hitTest(k.next.cx(), k.next.cy()).part == KeysPart::Next);
+    CHECK(k.hitTest(k.info.cx(), k.info.cy()).part == KeysPart::Panel);
+    CHECK(k.hitTest(2, 2).part == KeysPart::Outside);
+    for (int n = 0; n < 128; ++n)   // even the smallest window has room for one dot per key
+        if (k.key(n).w > 0) CHECK(k.markerCapacity(n) >= 1);
+}
+
+TEST(every_visible_key_hits_itself_and_black_keys_lie_on_top)
+{
+    for (float w : {EditorLayout::kMinWidth, 1400.0f, 3000.0f}) {
+        KeyboardLayout k;
+        k.update(w, 400, 8);
+        for (int first = 0; first <= k.maxFirstOctave(); ++first) {
+            k.firstOctave = first;
+            int shown = 0;
+            for (int n = 0; n < 128; ++n) {
+                const Rect r = k.key(n);
+                if (r.w <= 0) continue;
+                ++shown;
+                CHECK(r.x >= k.keys.x - 0.01f && r.right() <= k.keys.right() + 0.01f);
+                // White keys are hit below the black ones; black keys anywhere.
+                const float y = isBlackKey(n) ? r.cy() : r.bottom() - 4;
+                const KeysHit h = k.hitTest(r.cx(), y);
+                CHECK(h.part == KeysPart::Key);
+                CHECK_EQ(h.index, n);
+                for (int m = 0; m < k.markerCapacity(n); ++m) {
+                    const Rect d = k.marker(n, m);
+                    const KeysHit dh = k.hitTest(d.cx(), d.cy());   // a dot never sits on another key
+                    CHECK(dh.part == KeysPart::Key);
+                    CHECK_EQ(dh.index, n);
+                }
+                CHECK(k.marker(n, k.markerCapacity(n)).w == 0);
+            }
+            CHECK(shown > 0);
+        }
+        CHECK(k.key(128).w == 0 && k.key(-1).w == 0);
+    }
+    KeyboardLayout k;
+    k.update(EditorLayout::kMinWidth, 400, 8);
+    k.firstOctave = 3;
+    const Rect cs = k.key(37), c = k.key(36);       // C#1 overlaps the top right of C1
+    CHECK(c.contains(cs.x + 1, cs.cy()));
+    CHECK_EQ(k.hitTest(cs.x + 1, cs.cy()).index, 37);
+}
+
+TEST(keyboard_scrolls_by_octave_and_follows_the_note)
+{
+    KeyboardLayout k;
+    k.update(EditorLayout::kMinWidth, 400, 8);
+    k.scrollOctaves(-100);
+    CHECK_EQ(k.firstOctave, 0);
+    k.scrollOctaves(100);
+    CHECK_EQ(k.firstOctave, KeyboardLayout::kOctaves - k.octaves);
+    CHECK(k.key(127).w > 0);
+    k.ensureVisible(36);
+    CHECK(k.key(36).w > 0);
+    CHECK_EQ(k.firstOctave, 3);                     // scrolled the least: C1 is in the first octave shown
+    k.ensureVisible(40);
+    CHECK_EQ(k.firstOctave, 3);                     // already visible: nothing moves
+    k.update(4000, 400, 8);                         // the panel stops growing at kMaxW
+    CHECK(k.panel.w == KeyboardLayout::kMaxW);
+    CHECK_EQ(k.octaves, 6);
+    CHECK(k.key(36).w > 0 && k.key(40).w > 0);
+}
+
+TEST(track_menu_has_a_keyboard_button_next_to_the_midi_note)
+{
+    const Model m = defaultModel();
+    Menu menu;
+    menu.open(trackTarget(m, m.pattern().tracks[0].id), 10, 10, EditorLayout::kMinWidth, EditorLayout::kMinHeight);
+    int found = 0;
+    for (int i = 0; i < menu.count; ++i) {
+        const Rect k = menu.keys(i);
+        if (menu.fields[i].key != FieldKey::TrackNote) {
+            CHECK(k.w == 0);
+            continue;
+        }
+        ++found;
+        CHECK(k.right() <= menu.row(i).right());
+        CHECK(menu.number(i).right() <= k.x);
+        CHECK(menu.hitTest(k.cx(), k.cy()).part == MenuPart::Keys);
+        const Rect n = menu.number(i);
+        CHECK(menu.hitTest(n.cx(), n.cy()).part == MenuPart::Number);
+    }
+    CHECK_EQ(found, 1);
+}
+
+TEST(choosing_a_note_previews_it_and_the_same_note_adds_no_undo_step)
+{
+    Model m = defaultModel();
+    Bridge b(m);
+    Track& t = m.pattern().tracks[0];
+    t.velocityPct = 50;
+    const int other = t.note == 40 ? 41 : 40;
+    Bridge::Result r = b.handle(cmd::modifyTrack(t.id, {{"note", other}}).c_str());
+    CHECK(ok(r) && r.changed);
+    CHECK_EQ((int)t.note, other);
+    CHECK_EQ(r.auditions.size(), 1u);
+    CHECK_EQ((int)r.auditions[0].note, other);
+    CHECK_EQ((int)r.auditions[0].velocity, 50);
+    CHECK(m.history.canUndo());
+
+    CHECK(ok(b.handle(cmd::undo().c_str())));
+    CHECK(!m.history.canUndo());
+    CHECK(m.history.canRedo());
+    const int same = m.pattern().tracks[0].note;
+    r = b.handle(cmd::modifyTrack(t.id, {{"note", same}}).c_str());
+    CHECK(ok(r) && !r.changed);
+    CHECK_EQ(r.auditions.size(), 1u);               // still heard
+    CHECK(!m.history.canUndo());                    // but nothing to undo
+    CHECK(m.history.canRedo());                     // and the redo is kept
+
+    r = b.handle(cmd::modifyTrack(t.id, {{"channel", 3}}).c_str());
+    CHECK(ok(r) && r.changed && r.auditions.empty());   // other track edits are silent
+    m.settings.audition = false;
+    CHECK(b.handle(cmd::modifyTrack(t.id, {{"note", 50}}).c_str()).auditions.empty());
+
+    // The note keyboard asks for the preview explicitly: heard with the setting off, also for the current note.
+    r = b.handle(cmd::modifyTrack(t.id, {{"note", 50}}, 0, true).c_str());
+    CHECK(ok(r) && !r.changed);
+    CHECK_EQ(r.auditions.size(), 1u);
+    CHECK_EQ((int)r.auditions[0].note, 50);
+    CHECK_EQ((int)r.auditions[0].channel, 3);
+    r = b.handle(cmd::modifyTrack(t.id, {{"channel", 4}}, 0, true).c_str());
+    CHECK(ok(r) && r.auditions.empty());            // only a note choice plays
+    r = b.handle(("{\"version\":1,\"type\":\"modifyTrack\",\"track\":" + std::to_string(t.id) +
+                  ",\"props\":{\"note\":51},\"preview\":1}").c_str());
+    CHECK(!ok(r) && r.auditions.empty());
+    CHECK_EQ((int)t.note, 50);                      // rejected atomically
 }
 
 int main() { return testfw::runAll(); }

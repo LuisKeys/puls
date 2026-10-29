@@ -14,7 +14,7 @@ struct Rect {
 
 enum class Item : uint8_t {
     None,
-    Undo, Redo, Enable, Audition, Resolution, Swing, RemoveTrack, AddTrack, Settings, Help,
+    Undo, Redo, Enable, Audition, Keys, Resolution, Swing, RemoveTrack, AddTrack, Settings, Help,
     ConfirmYes, ConfirmNo,
     Slot,              // index = bank slot
     Label, Mute, Solo, Length, // index = track index
@@ -57,7 +57,7 @@ public:
     float scrollX = 0, scrollY = 0;
 
     // Toolbar.
-    Rect toolbar, undo, redo, enable, audition, patternName, trackName, resLabel, resolution, swingLabel, swing, swingValue,
+    Rect toolbar, undo, redo, enable, audition, patternName, trackName, keys, resLabel, resolution, swingLabel, swing, swingValue,
          trackCountText, removeTrack, addTrack, settings, help;
     // Inline confirmation for track removal, floating over the top-left of the grid.
     Rect confirmBar, confirmText, confirmYes, confirmNo;

@@ -3,6 +3,7 @@
 #include "Commands.hpp"
 #include "EditorLayout.hpp"
 #include "Help.hpp"
+#include "Keyboard.hpp"
 #include "MenuView.hpp"
 #include "Paint.hpp"
 #include "Selection.hpp"
@@ -22,6 +23,8 @@ namespace {
 
 using puls::gui::Hit;
 using puls::gui::Item;
+using puls::gui::KeysHit;
+using puls::gui::KeysPart;
 using puls::gui::EditorLayout;
 using puls::gui::MenuKind;
 using puls::gui::MenuPart;
@@ -39,6 +42,20 @@ constexpr float kLengthPxPerStep = 6.0f;
 constexpr float kScrollPxPerLine = 30.0f;
 constexpr auto  kConfirmTimeout = std::chrono::seconds(6);
 constexpr auto  kStatusTimeout = std::chrono::seconds(4);
+constexpr auto  kKeyMinDown = std::chrono::milliseconds(90);    // a quick click still shows the key going down
+constexpr auto  kKeyRelease = std::chrono::milliseconds(140);   // then it eases back up
+
+// a..b by t (0..1), per channel; colors are 0xRRGGBB.
+uint32_t mix(uint32_t a, uint32_t b, float t)
+{
+    uint32_t c = 0;
+    for (int sh = 0; sh <= 16; sh += 8)
+    {
+        const float x = ((a >> sh) & 255) + (static_cast<float>((b >> sh) & 255) - ((a >> sh) & 255)) * t;
+        c |= static_cast<uint32_t>(std::lround(x)) << sh;
+    }
+    return c;
+}
 
 } // namespace
 
@@ -115,6 +132,12 @@ protected:
             fStatus.clear();
             dirty = true;
         }
+        if (fPressNote >= 0)
+        {
+            dirty = true;   // animating a key of the note keyboard
+            if (!fKeysOpen || (!fPressHeld && keyPress(now) <= 0.0f))
+                fPressNote = -1;
+        }
 
         if (dirty)
             repaint();
@@ -156,6 +179,7 @@ protected:
         drawStatus();
         drawPopup();
         fMenu.draw(*this, model());
+        drawKeys();
         drawHelp();
     }
 
@@ -173,6 +197,7 @@ protected:
         {
             if (ev.button == kMouseButtonLeft)
             {
+                releaseKey();
                 if (fMenu.dragging())
                     fMenu.mouseUp(model());
                 else
@@ -188,6 +213,13 @@ protected:
             // The help is modal: a click outside the panel or on × closes it, anything else is ignored.
             if (fHelp.hitTest(x, y) != puls::gui::HelpHit::Panel)
                 fHelpOpen = false;
+            repaint();
+            return true;
+        }
+        if (fKeysOpen)
+        {
+            if (ev.button == kMouseButtonLeft)
+                handleKeysClick(fKeys.hitTest(x, y));
             repaint();
             return true;
         }
@@ -247,6 +279,16 @@ protected:
             }
             return true;
         }
+        if (fKeysOpen)
+        {
+            const KeysHit h = fKeys.hitTest(x, y);
+            if (h.part != fKeysHover.part || h.index != fKeysHover.index)
+            {
+                fKeysHover = h;
+                repaint();
+            }
+            return true;
+        }
         if (fMenu.dragging())
         {
             fMenu.motion(x, y);
@@ -295,6 +337,16 @@ protected:
             repaint();
             return true;
         }
+        if (fKeysOpen)
+        {
+            // Either wheel axis moves the keyboard by an octave (up / left = lower notes).
+            const double d = ev.delta.getX() != 0.0 ? -ev.delta.getX() : ev.delta.getY();
+            if (d != 0.0)
+                fKeys.scrollOctaves(d > 0 ? -1 : 1);
+            fKeysHover = fKeys.hitTest(x, y);
+            repaint();
+            return true;
+        }
         if (fMenu.isOpen() && fMenu.scroll(x, y, static_cast<float>(ev.delta.getY()), model()))
         {
             repaint();
@@ -337,6 +389,12 @@ protected:
                 fHelp.scrollBy((ev.key == kKeyPageDown ? 1.0f : -1.0f) * fHelp.body.h);
             repaint();
             return true;   // grid and global shortcuts are off while the help is open
+        }
+        if (fKeysOpen)
+        {
+            keysKey(ev.key, ev.mod);
+            repaint();
+            return true;   // the keyboard is modal too
         }
         if (fLenEditTrack != 0)
         {
@@ -387,6 +445,8 @@ protected:
             return false;
         if (fLenEditTrack != 0)
             fLenEdit.insert(ev.string);
+        else if (fKeysOpen)
+            return true;
         else if (!fMenu.editing() && std::strcmp(ev.string, "?") == 0)
             toggleHelp();
         else if (!fMenu.character(ev.string))
@@ -608,6 +668,7 @@ private:
     {
         fL.update(getWidth() / fScale, getHeight() / fScale, pattern().trackCount, puls::kMaxSteps, fConfirmTrack != 0);
         fHelp.update(fL.width, fL.height);
+        fKeys.update(fL.width, fL.height, pattern().trackCount);
     }
 
     void toggleHelp()
@@ -616,13 +677,134 @@ private:
         if (!fHelpOpen)
             return;
         // The help is modal: finish whatever was being edited first.
+        leaveEditor();
+        fHelpCloseHot = false;
+    }
+
+    // Before a modal overlay opens: commit the length field, close menus and popups, drop the hover.
+    void leaveEditor()
+    {
         if (fLenEditTrack != 0)
             commitLengthEdit();
         fMenu.close(model());
         fPopup = Popup::None;
         fHover = {};
-        fHelpCloseHot = false;
         setCursor(kMouseCursorArrow);
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // Note keyboard (modal): pick a track, click a key to set its MIDI note
+
+    void openKeys(uint32_t trackId)
+    {
+        leaveEditor();
+        select(indexOf(trackId));
+        relayout();
+        if (const puls::Track* t = selectedTrack())
+            fKeys.ensureVisible(t->note);
+        fKeysHover = {};
+        fKeysOpen = true;
+    }
+
+    void setNote(int note)
+    {
+        if (const puls::Track* t = selectedTrack())
+        {
+            note = std::clamp(note, 0, 127);
+            fKeys.ensureVisible(note);
+            // Always heard, whatever the ♪ setting; the same note again only plays it (no undo step).
+            send(cmd::modifyTrack(t->id, {{"note", note}}, ++fGestureSeq, true));
+        }
+    }
+
+    void handleKeysClick(const KeysHit& h)
+    {
+        switch (h.part)
+        {
+        case KeysPart::Outside:
+        case KeysPart::Close:
+            fKeysOpen = false;
+            break;
+        case KeysPart::Prev:
+        case KeysPart::Next:
+            fKeys.scrollOctaves(h.part == KeysPart::Next ? 1 : -1);
+            break;
+        case KeysPart::Track:
+            select(h.index);
+            break;
+        case KeysPart::Key:
+            pressKey(h.index, true);
+            setNote(h.index);
+            break;
+        case KeysPart::Panel:
+            break;
+        }
+    }
+
+    // Press animation: a key stays down while the mouse button is held (at least kKeyMinDown), then eases back
+    // up over kKeyRelease. uiIdle repaints while it runs.
+    void pressKey(int note, bool held)
+    {
+        fPressNote = note;
+        fPressHeld = held;
+        fPressUntil = Clock::now() + kKeyMinDown;
+    }
+
+    void releaseKey()
+    {
+        if (fPressNote < 0 || !fPressHeld)
+            return;
+        fPressHeld = false;
+        fPressUntil = std::max(fPressUntil, Clock::now());
+    }
+
+    // 1 = fully down, 0 = up.
+    float keyPress(Clock::time_point now) const
+    {
+        if (fPressNote < 0)
+            return 0.0f;
+        if (fPressHeld || now <= fPressUntil)
+            return 1.0f;
+        const float t = std::chrono::duration<float>(now - fPressUntil) / std::chrono::duration<float>(kKeyRelease);
+        return std::max(0.0f, 1.0f - t);
+    }
+
+    // Esc closes; Up/Down pick the track, Left/Right move its note by a semitone; undo/redo keep working.
+    void keysKey(uint key, uint mods)
+    {
+        if ((mods & (kModifierControl | kModifierSuper)) && !(mods & kModifierAlt))
+        {
+            if (key == 'z' || key == 'Z')
+                send((mods & kModifierShift) ? cmd::redo() : cmd::undo());
+            else if (key == 'y' || key == 'Y')
+                send(cmd::redo());
+            return;
+        }
+        const puls::Pattern& p = pattern();
+        const int idx = indexOf(fSelected);
+        switch (key)
+        {
+        case kKeyEscape:
+            fKeysOpen = false;
+            break;
+        case kKeyUp:
+        case kKeyDown:
+            if (p.trackCount > 0)
+                select(std::clamp(idx + (key == kKeyDown ? 1 : -1), 0, p.trackCount - 1));
+            if (const puls::Track* t = selectedTrack())
+                fKeys.ensureVisible(t->note);
+            break;
+        case kKeyLeft:
+        case kKeyRight:
+            if (const puls::Track* t = selectedTrack())
+            {
+                pressKey(std::clamp(t->note + (key == kKeyRight ? 1 : -1), 0, 127), false);
+                setNote(t->note + (key == kKeyRight ? 1 : -1));
+            }
+            break;
+        default:
+            break;
+        }
     }
 
     // ---------------------------------------------------------------------------------------------------------
@@ -693,6 +875,9 @@ private:
             break;
         case Item::Help:
             toggleHelp();
+            break;
+        case Item::Keys:
+            if (selectedTrack() != nullptr) openKeys(fSelected);
             break;
         case Item::Swing:
             if (const puls::Track* t = selectedTrack())
@@ -924,6 +1109,7 @@ private:
         button(fL.audition, "\xE2\x99\xAA", true, m.settings.audition, hovered(Item::Audition), 14.0f);   // ♪
         clippedLabel(fL.patternName, p.name, col::text2);
         clippedLabel(fL.trackName, t ? t->name : "", col::text2);
+        paint::pianoButton(*this, fL.keys, fKeysOpen, hovered(Item::Keys));
 
         label(fL.resLabel, "Res", col::text2);
         char buf[64];
@@ -1143,6 +1329,110 @@ private:
                   "scroll for more \xE2\x86\x93", col::text2, ALIGN_RIGHT, 11.0f);   // ↓
     }
 
+    // Modal note keyboard: track chips, an info row and a piano with a dot in each track's color on its note.
+    void drawKeys()
+    {
+        if (!fKeysOpen)
+            return;
+        using puls::gui::KeyboardLayout;
+        const puls::Pattern& p = pattern();
+        const puls::Track* sel = selectedTrack();
+        const auto hot = [&](KeysPart part, int index = -1) { return fKeysHover.part == part && fKeysHover.index == index; };
+        char buf[96];
+
+        fillRect({0, 0, fL.width, fL.height}, 0x000000, 0.6f);
+        panel(fKeys.panel);
+        label({fKeys.header.x + KeyboardLayout::kPad, fKeys.header.y, 200, fKeys.header.h}, "MIDI notes", col::white, ALIGN_LEFT, 14.0f);
+        label({fKeys.header.x, fKeys.header.y, fKeys.close.x - 10 - fKeys.header.x, fKeys.header.h},
+              "pick a track, then click a key", col::text2, ALIGN_RIGHT, 11.0f);
+        button(fKeys.close, "\xC3\x97", true, false, hot(KeysPart::Close), 15.0f);   // ×
+
+        for (int i = 0; i < p.trackCount; ++i)
+        {
+            const puls::Track& t = p.tracks[i];
+            const Rect c = fKeys.chip(i);
+            const bool on = &t == sel;
+            fillRect(c, on ? col::cellBeat : col::cell, 1.0f, 4.0f);
+            strokeRect(c, on ? col::accent : hot(KeysPart::Track, i) ? col::text2 : col::line, on ? 1.5f : 1.0f, 4.0f);
+            beginPath();
+            circle(c.x + 10, c.cy(), 4);
+            fillColor(rgb(t.color, t.mute ? 0.45f : 1.0f));
+            fill();
+            const std::string n = puls::gui::noteName(t.note);
+            label({c.x, c.y, c.w - 6, c.h}, n.c_str(), on ? col::accent : col::text2, ALIGN_RIGHT, 11.0f);
+            clippedLabel({c.x + 19, c.y, c.w - 19 - 32, c.h}, t.name, on ? col::white : col::text);
+        }
+
+        // Info: the hovered key, otherwise the selected track's note.
+        const int shown = fKeysHover.part == KeysPart::Key ? fKeysHover.index : sel ? sel->note : -1;
+        if (shown >= 0)
+        {
+            const char* gm = puls::gui::gmDrumName(shown);
+            std::snprintf(buf, sizeof(buf), "%s%s%d  %s%s%s", fKeysHover.part == KeysPart::Key ? "" : sel->name,
+                          fKeysHover.part == KeysPart::Key ? "" : ": ", shown, puls::gui::noteName(shown).c_str(),
+                          gm ? "  \xC2\xB7  " : "", gm ? gm : "");   // ·
+            clippedLabel(fKeys.info, buf, col::text);
+        }
+        button(fKeys.prev, "\xE2\x80\xB9", fKeys.firstOctave > 0, false, hot(KeysPart::Prev), 14.0f);                    // ‹
+        button(fKeys.next, "\xE2\x80\xBA", fKeys.firstOctave < fKeys.maxFirstOctave(), false, hot(KeysPart::Next), 14.0f);   // ›
+
+        // Keys: white ones, then black ones on top; the selected track's key is tinted with its color.
+        const float press = keyPress(Clock::now());
+        const int first = fKeys.firstOctave * 12, last = std::min(127, (fKeys.firstOctave + fKeys.octaves) * 12 - 1);
+        for (int pass = 0; pass < 2; ++pass)
+            for (int n = first; n <= last; ++n)
+            {
+                const bool black = puls::gui::isBlackKey(n);
+                if (black != (pass == 1))
+                    continue;
+                const Rect k = fKeys.key(n);
+                // A pressed key gets a little darker (white) or lighter (black) and shorter, with a shadow at the top.
+                const float down = n == fPressNote ? press : 0.0f;
+                const float sink = down * (black ? 1.5f : 2.0f);
+                const Rect in = black ? Rect{k.x, k.y, k.w, k.h - sink} : Rect{k.x + 0.5f, k.y, k.w - 1, k.h - sink};
+                const uint32_t up = black ? (hot(KeysPart::Key, n) ? 0x3a3e47 : 0x1a1c21) : (hot(KeysPart::Key, n) ? 0xffffff : 0xd9dbe0);
+                fillRect(in, mix(up, black ? 0x454a54 : 0xc3c6cd, down), 1.0f, 2.0f);
+                if (sel != nullptr && sel->note == n)
+                    fillRect(in, sel->color, black ? 0.55f : 0.4f, 2.0f);
+                if (down > 0.0f)
+                {
+                    beginPath();
+                    rect(in.x, in.y, in.w, 8);
+                    fillPaint(linearGradient(in.x, in.y, in.x, in.y + 8, rgb(0x000000, 0.22f * down), rgb(0x000000, 0.0f)));
+                    fill();
+                }
+                if (black)
+                    strokeRect(in, 0x000000, 1.0f, 2.0f, 0.6f);
+                if (!black && n % 12 == 0)
+                    label({k.x, k.bottom() - 14, k.w, 12}, puls::gui::noteName(n).c_str(), 0x4a4f58, ALIGN_CENTER, 9.0f);
+                drawMarkers(n);
+            }
+    }
+
+    // Track dots on a key, the selected track first; a ring marks it. Stacks up to what fits on the key.
+    void drawMarkers(int note)
+    {
+        const puls::Pattern& p = pattern();
+        const int cap = fKeys.markerCapacity(note);
+        int k = 0;
+        for (int pass = 0; pass < 2 && k < cap; ++pass)
+            for (int i = 0; i < p.trackCount && k < cap; ++i)
+            {
+                const puls::Track& t = p.tracks[i];
+                const bool sel = t.id == fSelected;
+                if (t.note != note || sel != (pass == 0))
+                    continue;
+                const Rect m = fKeys.marker(note, k++);
+                beginPath();
+                circle(m.cx(), m.cy(), m.w * 0.5f);
+                fillColor(rgb(t.color, t.mute ? 0.45f : 1.0f));
+                fill();
+                strokeColor(rgb(sel ? col::white : 0x000000, sel ? 1.0f : 0.5f));
+                strokeWidth(sel ? 2.0f : 1.0f);
+                stroke();
+            }
+    }
+
     void drawStatus()
     {
         if (fStatus.empty())
@@ -1253,12 +1543,20 @@ private:
     puls::gui::HelpLayout fHelp;
     bool fHelpOpen = false, fHelpCloseHot = false;
 
+    // Note keyboard overlay (modal); its selected track is the editor's (fSelected).
+    puls::gui::KeyboardLayout fKeys;
+    bool    fKeysOpen = false;
+    KeysHit fKeysHover;
+    int     fPressNote = -1;                  // key being animated, -1 = none
+    bool    fPressHeld = false;               // the mouse button is still down on it
+    Clock::time_point fPressUntil{};          // stays fully down until then
+
     puls::gui::Selection fSel;
     int                  fSelPattern = -1;
     puls::gui::StepBlock fClip;
 
     // Right-click popovers; shares the gesture counter so menu and grid edits never coalesce by accident.
-    MenuView fMenu{[this](const std::string& c) { send(c); }, fGestureSeq};
+    MenuView fMenu{[this](const std::string& c) { send(c); }, [this](uint32_t track) { openKeys(track); }, fGestureSeq};
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PulsUI)
 };
