@@ -8,6 +8,7 @@ struct Pattern {
     uint32_t seed = 1;          // drives deterministic probability rolls
     uint8_t  trackCount = 0;    // 0..16
     Track    tracks[kMaxTracks];
+    char     templateId[32] = {};   // the template the track layout came from; not used by the engine
 };
 
 } // namespace puls

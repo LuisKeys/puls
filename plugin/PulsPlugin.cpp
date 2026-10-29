@@ -15,7 +15,7 @@ static constexpr size_t kMaxOutbox = 512;
 static constexpr double kAuditionSeconds = 0.2;   // length of a preview note
 
 PulsPlugin::PulsPlugin()
-    : Plugin(0, 0, 1), fBridge(fModel)
+    : Plugin(0, 0, 1), fTemplates(puls::TemplateStore::defaultDirectory()), fBridge(fModel, &fTemplates)
 {
     puls::makeDefaultBank(fModel);
     for (auto& p : telPlayhead)

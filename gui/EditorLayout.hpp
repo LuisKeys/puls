@@ -17,6 +17,7 @@ enum class Item : uint8_t {
     Undo, Redo, Enable, Audition, Keys, Resolution, Swing, RemoveTrack, AddTrack, Settings, Help,
     ConfirmYes, ConfirmNo,
     Slot,              // index = bank slot
+    Kit,               // the template dropdown
     Label, Mute, Solo, Length, // index = track index
     Cell,              // index = track index, step
     HScrollbar,
@@ -32,7 +33,7 @@ struct Hit {
     int  step = -1;
 };
 
-enum class Popup : uint8_t { None, Resolution, Settings };
+enum class Popup : uint8_t { None, Resolution, Settings, Templates };   // Templates: see TemplateList
 
 // Geometry of the editor in logical pixels; the UI multiplies by the host scale factor when drawing.
 // No DPF/DGL here, so layout and hit-testing are unit-tested headless.
@@ -62,7 +63,7 @@ public:
     // Inline confirmation for track removal, floating over the top-left of the grid.
     Rect confirmBar, confirmText, confirmYes, confirmNo;
     // Pattern bank and transport.
-    Rect bank, bankName, transport;
+    Rect bank, bankName, kit, transport;
     Rect slot(int i) const noexcept;
     // Grid: rows scroll vertically, cells scroll both ways, labels stay on the left.
     Rect grid, cells, hscroll;

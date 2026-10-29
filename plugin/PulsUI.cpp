@@ -7,6 +7,7 @@
 #include "MenuView.hpp"
 #include "Paint.hpp"
 #include "Selection.hpp"
+#include "TemplateList.hpp"
 #include "Serialization.hpp"
 #include "TextEdit.hpp"
 #include <algorithm>
@@ -31,6 +32,8 @@ using puls::gui::MenuPart;
 using puls::gui::MenuTarget;
 using puls::gui::Popup;
 using puls::gui::Rect;
+using puls::gui::TemplateMode;
+using puls::gui::TemplatePart;
 using Clock = std::chrono::steady_clock;
 namespace cmd = puls::gui::cmd;
 namespace col = paint::col;
@@ -250,6 +253,12 @@ protected:
         if (ev.button != kMouseButtonLeft)
             return true;
 
+        if (fPopup == Popup::Templates)
+        {
+            handleTemplateClick(fTpl.hitTest(x, y));
+            repaint();
+            return true;
+        }
         const Hit hit = fL.hitTest(x, y, fPopup);
         if (fPopup != Popup::None)
         {
@@ -348,6 +357,14 @@ protected:
             repaint();
             return true;
         }
+        if (fPopup == Popup::Templates && fTpl.panel.contains(x, y))
+        {
+            if (fTpl.mode() == TemplateMode::List)
+                fTpl.scrollBy(-static_cast<float>(ev.delta.getY()) * puls::gui::TemplateList::kRowH);
+            fTplHover = fTpl.hitTest(x, y);
+            repaint();
+            return true;
+        }
         if (fMenu.isOpen() && fMenu.scroll(x, y, static_cast<float>(ev.delta.getY()), model()))
         {
             repaint();
@@ -408,6 +425,11 @@ protected:
             repaint();
             return true;   // every key belongs to the field while it has focus
         }
+        if (fPopup == Popup::Templates && templateKey(ev.key))
+        {
+            repaint();
+            return true;
+        }
         if (fMenu.key(ev.key, model()))
         {
             repaint();
@@ -448,6 +470,8 @@ protected:
             fLenEdit.insert(ev.string);
         else if (fKeysOpen)
             return true;
+        else if (fPopup == Popup::Templates && fTpl.mode() == TemplateMode::Save)
+            fTplEdit.insert(ev.string);
         else if (!fMenu.editing() && std::strcmp(ev.string, "?") == 0)
             toggleHelp();
         else if (!fMenu.character(ev.string))
@@ -458,6 +482,7 @@ protected:
 
 private:
     enum class Drag : uint8_t { None, Cell, Swing, Length, Thumb };
+    enum class TplAction : uint8_t { None, Load, Overwrite, Delete };   // pending in the template dropdown
 
     // ---------------------------------------------------------------------------------------------------------
     // Step selection and clipboard (keys arrive only while the plugin window has keyboard focus)
@@ -670,6 +695,8 @@ private:
         fL.update(getWidth() / fScale, getHeight() / fScale, pattern().trackCount, puls::kMaxSteps, fConfirmTrack != 0);
         fHelp.update(fL.width, fL.height);
         fKeys.update(fL.width, fL.height, pattern().trackCount);
+        if (fPopup == Popup::Templates)
+            fTpl.place(fL.kit, fL.width, fL.height);
     }
 
     void toggleHelp()
@@ -832,6 +859,181 @@ private:
     }
 
     // ---------------------------------------------------------------------------------------------------------
+    // Template dropdown: load a template into the selected pattern, save its tracks as one, delete user ones.
+    // Anything that would lose something (steps, a saved template) asks first, inside the dropdown.
+
+    static std::string trimmed(const std::string& s)
+    {
+        const size_t a = s.find_first_not_of(' '), b = s.find_last_not_of(' ');
+        return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+    }
+
+    std::vector<puls::gui::TemplateEntry> templateEntries() const
+    {
+        std::vector<puls::gui::TemplateEntry> v;
+        for (const puls::KitTemplate& t : fPlugin->templates().list())
+            v.push_back({t.id, t.name, t.user});
+        return v;
+    }
+
+    void openTemplates()
+    {
+        if (fPopup == Popup::Templates)
+        {
+            fPopup = Popup::None;
+            return;
+        }
+        fPlugin->reloadTemplates();   // picks up templates saved by another instance
+        fTplPattern = model().selected;
+        fTpl.open(fL.kit, fL.width, fL.height, templateEntries());
+        fTplHover = {};
+        fPopup = Popup::Templates;
+    }
+
+    void askTemplate(TplAction action, const std::string& id, const std::string& name, std::string line1, std::string line2, const char* ok)
+    {
+        fTplAction = action;
+        fTplId = id;
+        fTplName = name;
+        fTplLine1 = std::move(line1);
+        fTplLine2 = std::move(line2);
+        fTplOk = ok;
+        fTpl.setMode(TemplateMode::Confirm);
+        fTplHover = {};
+    }
+
+    // After a save or delete: back to the list, which now shows the change.
+    void templatesChanged()
+    {
+        fTpl.setEntries(templateEntries());
+        fTpl.setMode(TemplateMode::List);
+        fTplHover = {};
+    }
+
+    void handleTemplateClick(const puls::gui::TemplateHit& h)
+    {
+        const std::vector<puls::gui::TemplateEntry>& entries = fTpl.entries();
+        switch (h.part)
+        {
+        case TemplatePart::None:
+            fPopup = Popup::None;   // a click outside closes the dropdown and does nothing else
+            break;
+        case TemplatePart::Entry:
+        {
+            const puls::gui::TemplateEntry& e = entries[h.index];
+            if (puls::templateNeedsConfirm(model().bank[fTplPattern]))
+            {
+                char buf[64];
+                std::snprintf(buf, sizeof(buf), "Load \"%s\" into Pattern %d?", e.name.c_str(), fTplPattern + 1);
+                askTemplate(TplAction::Load, e.id, e.name, buf, "Its tracks and steps will be replaced.", "Load");
+            }
+            else
+            {
+                send(cmd::applyTemplate(fTplPattern, e.id));
+                fPopup = Popup::None;
+            }
+            break;
+        }
+        case TemplatePart::Delete:
+        {
+            const puls::gui::TemplateEntry& e = entries[h.index];
+            askTemplate(TplAction::Delete, e.id, e.name, "Delete the template \"" + e.name + "\"?", "Patterns that use it keep their tracks.", "Delete");
+            break;
+        }
+        case TemplatePart::SaveRow:
+        {
+            // Suggest the name of the user template the pattern came from, so saving again updates it.
+            const puls::KitTemplate* from = fPlugin->templates().find(model().bank[fTplPattern].templateId);
+            fTplEdit.begin(from != nullptr && from->user ? from->name : std::string(), puls::kMaxTemplateNameBytes, false);
+            fTpl.setMode(TemplateMode::Save);
+            fTplHover = {};
+            break;
+        }
+        case TemplatePart::Ok:
+            if (fTpl.mode() == TemplateMode::Save)
+                commitTemplateSave();
+            else
+                confirmTemplate();
+            break;
+        case TemplatePart::Cancel:
+            fTpl.setMode(TemplateMode::List);
+            fTplHover = {};
+            break;
+        case TemplatePart::Field:
+        case TemplatePart::Panel:
+            break;
+        }
+    }
+
+    void commitTemplateSave()
+    {
+        const std::string name = trimmed(fTplEdit.text());
+        if (name.empty())
+            return;
+        if (const puls::KitTemplate* same = fPlugin->templates().findByName(name))
+        {
+            if (!same->user)
+                showStatus("\"" + same->name + "\" is a built-in template; choose another name");
+            else
+                askTemplate(TplAction::Overwrite, same->id, name, "A template named \"" + same->name + "\" exists.", "Replace it with these tracks?", "Replace");
+            return;
+        }
+        send(cmd::saveTemplate(fTplPattern, name, false));
+        if (fPlugin->templates().findByName(name) != nullptr)   // otherwise the error shows in the status line
+            templatesChanged();
+    }
+
+    void confirmTemplate()
+    {
+        switch (fTplAction)
+        {
+        case TplAction::Load:
+            send(cmd::applyTemplate(fTplPattern, fTplId));
+            fPopup = Popup::None;
+            break;
+        case TplAction::Overwrite:
+            send(cmd::saveTemplate(fTplPattern, fTplName, true));
+            templatesChanged();
+            break;
+        case TplAction::Delete:
+            send(cmd::deleteTemplate(fTplId));
+            templatesChanged();
+            break;
+        case TplAction::None:
+            break;
+        }
+        fTplAction = TplAction::None;
+    }
+
+    // Keys while the dropdown is open: the name field takes editing keys; Enter confirms, Esc steps back.
+    bool templateKey(uint key)
+    {
+        const bool enter = key == kKeyEnter || key == kKeyPadEnter;
+        switch (fTpl.mode())
+        {
+        case TemplateMode::Save:
+            if (enter)
+                commitTemplateSave();
+            else if (key == kKeyEscape)
+                fTpl.setMode(TemplateMode::List);
+            else
+                applyEditKey(fTplEdit, key);
+            return true;   // every key belongs to the field while it has focus
+        case TemplateMode::Confirm:
+            if (enter)
+                confirmTemplate();
+            else if (key == kKeyEscape)
+                fTpl.setMode(TemplateMode::List);
+            return enter || key == kKeyEscape;
+        case TemplateMode::List:
+            if (key == kKeyEscape)
+                fPopup = Popup::None;
+            return key == kKeyEscape;
+        }
+        return false;
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
     // Clicks and drags
 
     void handlePopupClick(const Hit& hit)
@@ -896,6 +1098,9 @@ private:
             break;
         case Item::Settings:
             fPopup = Popup::Settings;
+            break;
+        case Item::Kit:
+            openTemplates();
             break;
         case Item::Help:
             toggleHelp();
@@ -1084,6 +1289,18 @@ private:
 
     void hover(float x, float y)
     {
+        if (fPopup == Popup::Templates)
+        {
+            const puls::gui::TemplateHit h = fTpl.hitTest(x, y);
+            if (h.part != fTplHover.part || h.index != fTplHover.index)
+            {
+                fTplHover = h;
+                fHover = {};
+                setCursor(h.part == TemplatePart::Field ? kMouseCursorCaret : kMouseCursorArrow);
+                repaint();
+            }
+            return;
+        }
         const Hit hit = fL.hitTest(x, y, fPopup);
         if (hit.item == fHover.item && hit.index == fHover.index && hit.step == fHover.step)
             return;
@@ -1183,6 +1400,12 @@ private:
             }
         }
         clippedLabel(fL.bankName, m.pattern().name, col::text2);
+        const puls::KitTemplate* kit = fPlugin->templates().find(m.pattern().templateId);
+        const std::string kitLabel = kit != nullptr ? kit->name : m.pattern().templateId[0] != '\0' ? std::string(m.pattern().templateId) : std::string("Kit");
+        const bool kitOpen = fPopup == Popup::Templates;
+        button(fL.kit, "", true, kitOpen, hovered(Item::Kit));
+        clippedLabel({fL.kit.x + 8, fL.kit.y, fL.kit.w - 24, fL.kit.h}, kitLabel.c_str(), kitOpen ? col::bg : col::text);
+        label({fL.kit.right() - 16, fL.kit.y, 10, fL.kit.h}, "\xE2\x96\xBE", kitOpen ? col::bg : col::text2, ALIGN_CENTER);   // ▾
         std::snprintf(buf, sizeof(buf), "%s  %.1f bpm", fPlaying ? "playing" : "stopped", fBpm);
         label(fL.transport, buf, col::text2, ALIGN_RIGHT);
     }
@@ -1495,6 +1718,10 @@ private:
                 label({o.x + 8, o.y, o.w - 8, o.h}, puls::resolutionName(static_cast<puls::Resolution>(i)), cur ? col::accent : col::text);
             }
         }
+        else if (fPopup == Popup::Templates)
+        {
+            drawTemplates();
+        }
         else if (fPopup == Popup::Settings)
         {
             const puls::Settings& s = model().settings;
@@ -1510,6 +1737,68 @@ private:
             for (int i = 0; i < 3; ++i)
                 radio(fL.switchOption(i), kSwitch[i], s.patternSwitch == kOrder[i], hovered(Item::SwitchOption, i));
         }
+    }
+
+    void drawTemplates()
+    {
+        const puls::gui::TemplateList& tl = fTpl;
+        panel(tl.panel);
+        auto hot = [&](TemplatePart part, int index = -1) { return fTplHover.part == part && fTplHover.index == index; };
+        if (tl.mode() == TemplateMode::List)
+        {
+            save();
+            scissor(tl.list.x, tl.list.y, tl.list.w, tl.list.h);
+            for (int i = 0; i < static_cast<int>(tl.rows().size()); ++i)
+            {
+                const Rect r = tl.row(i);
+                if (r.bottom() < tl.list.y || r.y > tl.list.bottom())
+                    continue;
+                const puls::gui::TemplateList::Row& row = tl.rows()[i];
+                if (row.entry < 0)
+                {
+                    label({r.x + 4, r.y + 2, r.w - 4, r.h}, row.header, col::text2, ALIGN_LEFT, 11.0f);
+                    continue;
+                }
+                const puls::gui::TemplateEntry& e = tl.entries()[row.entry];
+                if (hot(TemplatePart::Entry, row.entry) || hot(TemplatePart::Delete, row.entry))
+                    fillRect(r, col::cell, 1.0f, 3.0f);
+                const bool current = e.id == pattern().templateId;
+                const Rect del = tl.deleteBox(i);
+                clippedLabel({r.x + 10, r.y, r.w - 14 - del.w, r.h}, e.name.c_str(), current ? col::accent : col::text);
+                if (del.w > 0)
+                    label(del, "\xC3\x97", hot(TemplatePart::Delete, row.entry) ? col::errText : col::text2, ALIGN_CENTER, 14.0f);   // ×
+            }
+            restore();
+            if (tl.maxScroll() > 0)
+            {
+                const float th = std::max(16.0f, tl.list.h * tl.list.h / (tl.list.h + tl.maxScroll()));
+                const float ty = tl.list.y + (tl.list.h - th) * tl.scroll / tl.maxScroll();
+                fillRect({tl.list.right() - 3, ty, 3, th}, col::text2, 0.6f, 1.5f);
+            }
+            hline(tl.list.x, tl.list.right(), tl.saveRow.y - 2, col::line);
+            if (hot(TemplatePart::SaveRow))
+                fillRect(tl.saveRow, col::cell, 1.0f, 3.0f);
+            clippedLabel({tl.saveRow.x + 10, tl.saveRow.y, tl.saveRow.w - 14, tl.saveRow.h}, "Save this pattern's tracks as a template\xE2\x80\xA6", col::text);
+            return;
+        }
+        if (tl.mode() == TemplateMode::Save)
+        {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "Save the tracks of Pattern %d as:", fTplPattern + 1);
+            clippedLabel(tl.line1, buf, col::text2);
+            paint::textField(*this, tl.field, "", &fTplEdit, hot(TemplatePart::Field));
+            button(tl.ok, "Save", !trimmed(fTplEdit.text()).empty(), false, hot(TemplatePart::Ok));
+        }
+        else
+        {
+            clippedLabel(tl.line1, fTplLine1.c_str(), col::text);
+            clippedLabel(tl.line2, fTplLine2.c_str(), col::errText);
+            save();
+            fillRect(tl.ok, col::danger, hot(TemplatePart::Ok) ? 1.0f : 0.85f, 4.0f);
+            label(tl.ok, fTplOk.c_str(), col::white, ALIGN_CENTER);
+            restore();
+        }
+        button(tl.cancel, "Cancel", true, false, hot(TemplatePart::Cancel));
     }
 
     void panel(const Rect& r) { paint::panel(*this, r); }
@@ -1588,6 +1877,14 @@ private:
     puls::gui::Selection fSel;
     int                  fSelPattern = -1;
     puls::gui::StepBlock fClip;
+
+    // Template dropdown (Popup::Templates) for pattern fTplPattern; Confirm mode carries the pending action.
+    puls::gui::TemplateList fTpl;
+    puls::gui::TemplateHit  fTplHover;
+    puls::gui::TextEdit     fTplEdit;
+    int         fTplPattern = 0;
+    TplAction   fTplAction = TplAction::None;
+    std::string fTplId, fTplName, fTplLine1, fTplLine2, fTplOk;
 
     // Right-click popovers; shares the gesture counter so menu and grid edits never coalesce by accident.
     MenuView fMenu{[this](const std::string& c) { send(c); }, [this](uint32_t track) { openKeys(track); }, fGestureSeq};

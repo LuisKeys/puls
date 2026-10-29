@@ -26,5 +26,8 @@ std::string selectPattern(int index, bool now);
 std::string renamePattern(int index, const std::string& name);
 // copyPattern, pastePattern, duplicatePattern or clearPattern.
 std::string patternAction(const char* type, int index);
+std::string applyTemplate(int index, const std::string& id);   // replaces pattern `index`'s tracks
+std::string saveTemplate(int index, const std::string& name, bool overwrite);
+std::string deleteTemplate(const std::string& id);
 
 } // namespace puls::gui::cmd

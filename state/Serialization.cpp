@@ -107,6 +107,14 @@ bool isDefault(const Step& s)
 
 } // namespace
 
+bool validTemplateId(std::string_view id)
+{
+    if (id.empty() || id.size() > sizeof(Pattern::templateId) - 1) return false;
+    for (const char c : id)
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
+    return true;
+}
+
 std::string dumpJson(const json& j)
 {
     return j.dump(-1, ' ', false, json::error_handler_t::replace);
@@ -160,6 +168,7 @@ json patternToJson(const Pattern& p)
     json tracks = json::array();
     for (int i = 0; i < p.trackCount && i < kMaxTracks; ++i) tracks.push_back(trackToJson(p.tracks[i], true));
     j["tracks"] = std::move(tracks);
+    if (p.templateId[0] != '\0') j["template"] = std::string(p.templateId, strnlen(p.templateId, sizeof(p.templateId)));
     return j;
 }
 
@@ -249,6 +258,11 @@ bool readPattern(const json& j, Pattern& out, uint32_t& maxId, std::string& err)
     Pattern p;
     if (!readName(j, "name", p.name, err)) return false;
     if (!readNum(j, "seed", 0, 0xFFFFFFFFll, p.seed, err)) return false;
+    if (const auto it = j.find("template"); it != j.end()) {
+        if (!it->is_string() || !validTemplateId(it->get_ref<const std::string&>())) { err = "template: expected a template id"; return false; }
+        const std::string& id = it->get_ref<const std::string&>();
+        std::memcpy(p.templateId, id.data(), id.size());
+    }
     const auto tit = j.find("tracks");
     if (tit == j.end() || !tit->is_array() || tit->size() > static_cast<size_t>(kMaxTracks)) {
         err = "pattern: tracks must be an array of at most 16";

@@ -1,6 +1,7 @@
 #pragma once
 #include "Auditioner.hpp"
 #include "Model.hpp"
+#include "Templates.hpp"
 #include <string>
 #include <vector>
 
@@ -26,13 +27,17 @@ constexpr size_t kMaxBatchCells = 1024;
 //   selectPattern {index, quantize?:"now"|"beat"|"bar"}   views the pattern and requests it for playback
 //   renamePattern {index, name}   copyPattern {index}   pastePattern {index}
 //   duplicatePattern {index}      clearPattern {index}
+//   applyTemplate {index, template}   replaces the pattern's tracks with a template's (empty steps; undoable)
+//   saveTemplate {index, name, overwrite?}   saves the pattern's track layout as a user template
+//   deleteTemplate {template}         user templates only (neither is undoable; both answer with `templates`)
 //   undo, redo
 // setStepVelocity, modifyStep and modifyTrack may carry a non-zero "gesture" id to coalesce a drag into one undo step.
 // Events: init, stepChanged, stepsChanged, trackChanged, patternChanged, bankChanged, settings, history,
-//         clipboard, error (transport and playheads are produced by the UI side from audio-thread telemetry).
+//         clipboard, templates [{id, name, user}], error (transport and playheads are produced by the UI side from audio-thread telemetry).
 class Bridge {
 public:
-    explicit Bridge(Model& model) : model_(model) {}
+    // Without a TemplateStore only the built-in templates exist and none can be saved.
+    explicit Bridge(Model& model, TemplateStore* templates = nullptr) : model_(model), templates_(templates) {}
 
     struct Result {
         std::vector<std::string> events;
@@ -50,9 +55,11 @@ public:
     Result handle(const char* json);
     std::string initEvent() const;
     static std::string errorEvent(const std::string& command, const std::string& message);
+    const TemplateStore& templates() const;
 
 private:
     Model& model_;
+    TemplateStore* templates_;
 };
 
 } // namespace puls

@@ -115,4 +115,28 @@ std::string patternAction(const char* type, int index)
     return str(c);
 }
 
+std::string applyTemplate(int index, const std::string& id)
+{
+    json c = command("applyTemplate");
+    c["index"] = index;
+    c["template"] = id;
+    return str(c);
+}
+
+std::string saveTemplate(int index, const std::string& name, bool overwrite)
+{
+    json c = command("saveTemplate");
+    c["index"] = index;
+    c["name"] = name;
+    if (overwrite) c["overwrite"] = true;
+    return str(c);
+}
+
+std::string deleteTemplate(const std::string& id)
+{
+    json c = command("deleteTemplate");
+    c["template"] = id;
+    return str(c);
+}
+
 } // namespace puls::gui::cmd

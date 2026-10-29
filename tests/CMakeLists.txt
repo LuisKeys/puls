@@ -16,8 +16,14 @@ target_link_libraries(engine_tests puls_engine)
 target_compile_options(engine_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
 add_test(NAME engine COMMAND engine_tests)
 
-add_library(puls_app STATIC ../state/Serialization.cpp ../bridge/Bridge.cpp)
-target_include_directories(puls_app PUBLIC ../model ../state ../bridge ../third_party)
+file(GLOB PULS_TEMPLATES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../templates/*.json)
+list(SORT PULS_TEMPLATES)
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/Templates.inc
+  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/embed-templates.sh ${CMAKE_CURRENT_BINARY_DIR}/Templates.inc ${PULS_TEMPLATES}
+  DEPENDS ${PULS_TEMPLATES} ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/embed-templates.sh)
+
+add_library(puls_app STATIC ../state/Serialization.cpp ../state/Templates.cpp ../bridge/Bridge.cpp ${CMAKE_CURRENT_BINARY_DIR}/Templates.inc)
+target_include_directories(puls_app PUBLIC ../model ../state ../bridge ../third_party ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(puls_app PUBLIC puls_engine)
 target_compile_options(puls_app PRIVATE -Wall -Wextra -Wno-unused-parameter)
 
@@ -26,7 +32,7 @@ target_link_libraries(bridge_tests puls_app)
 target_compile_options(bridge_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
 add_test(NAME bridge COMMAND bridge_tests)
 
-add_library(puls_gui STATIC ../gui/EditorLayout.cpp ../gui/Commands.cpp ../gui/Menu.cpp ../gui/Selection.cpp ../gui/Help.cpp ../gui/Keyboard.cpp)
+add_library(puls_gui STATIC ../gui/EditorLayout.cpp ../gui/Commands.cpp ../gui/Menu.cpp ../gui/Selection.cpp ../gui/Help.cpp ../gui/Keyboard.cpp ../gui/TemplateList.cpp)
 target_include_directories(puls_gui PUBLIC ../gui)
 target_link_libraries(puls_gui PUBLIC puls_app)
 target_compile_options(puls_gui PRIVATE -Wall -Wextra -Wno-unused-parameter)

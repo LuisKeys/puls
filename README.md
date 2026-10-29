@@ -9,6 +9,7 @@ native (DGL/NanoVG over OpenGL).
 - Per step: velocity, probability, ratchets (1-8), micro-timing (+-50 %), gate.
 - Per track: mute, solo, velocity / probability / duration scaling.
 - 16-pattern bank; switching is quantized (next bar by default while playing, next beat, or immediate).
+- Templates (kit presets): load a named track layout into a pattern (e.g. *Bitwig v8 E-drums Kit 01* for Bitwig's Drum Machine), or save a pattern's tracks as your own template.
 - Undo/redo, multi-select, copy/cut/paste of step blocks.
 - Project state (all 16 patterns) is saved with the host project.
 
@@ -39,9 +40,30 @@ Put Puls on a track *before* an instrument (note FX in Bitwig).
 | Toggle / clear / copy / cut / paste | Space or Enter / Delete / Ctrl-Cmd+C / X / V |
 | Undo / redo | Toolbar, or Ctrl-Cmd+Z / Shift+Ctrl-Cmd+Z |
 | Menu controls | Drag or scroll sliders; click a number or name to type (Enter confirms, Esc cancels) |
+| Templates | Bank bar "Kit ▾": pick one by name to load it into the pattern, or save this pattern's tracks as a template |
 | Help | Toolbar ? button or the ? key |
 
 Keyboard shortcuts only work while the plugin window has keyboard focus (whether a host forwards keys to it varies).
+
+## Templates
+A template is a named track layout (name, MIDI note, channel, color, length, resolution and the other track
+settings; never steps). Loading one replaces the tracks of the pattern on screen; its steps start empty, it asks
+first when the pattern has steps, and undo reverts it. The project remembers which template a pattern came from
+(`"template"` in the pattern) and keeps its tracks even if the template is later changed or deleted.
+
+- **Built-in**: every `templates/*.json` is embedded in the plugin at build time. To add one, drop a file with the
+  same schema into `templates/` and rebuild; the tests check that each one is valid.
+- **Yours**: "Save this pattern's tracks as a template…" writes `<id>.json` to `$XDG_CONFIG_HOME/puls/templates`
+  (default `~/.config/puls/templates`; on macOS `~/Library/Application Support/Puls/templates`, not yet tried there).
+  Files copied into that folder appear the next time the list opens.
+
+```json
+{"id": "bitwig-v8-edrums-01", "name": "Bitwig v8 E-drums Kit 01", "category": "drums", "source": "Bitwig Studio",
+ "tracks": [{"name": "E-Tom3Hi", "note": 40, "color": "#ff6256"}, {"name": "E-Tom8M", "note": 41, "color": "#ffab50"}]}
+```
+`id`: 1-31 of `a-z 0-9 -`, also the file name. `name`: 1-31 bytes. `tracks`: 1-16, each with the keys of a track in
+the project state (`name` up to 15 bytes, `note`, `channel` 0-15, `color`, `length`, `resolution`, `phase`, `swing`,
+...), no `id` or `steps`, and no two tracks with the same note and channel.
 
 ## Architecture
 `engine/` (pure C++, no DPF: sequencer, scheduler, pattern switcher, lock-free handoff) <- `model/` (editable state, undo) <-

@@ -6,6 +6,8 @@
 #include "Keyboard.hpp"
 #include "Menu.hpp"
 #include "Selection.hpp"
+#include "TemplateList.hpp"
+#include "Templates.hpp"
 #include "TextEdit.hpp"
 #include "Serialization.hpp"
 
@@ -106,6 +108,9 @@ TEST(toolbar_and_bank_fit_the_minimum_width)
     CHECK(l.hitTest(l.keys.cx(), l.keys.cy(), Popup::None).item == Item::Keys);
     CHECK(l.trackName.right() <= l.keys.x && l.keys.right() <= l.resLabel.x);
     CHECK(l.help.right() <= l.width);
+    CHECK(l.bankName.right() <= l.kit.x && l.kit.right() <= l.transport.x && l.kit.w >= 60);
+    CHECK(l.hitTest(l.kit.cx(), l.kit.cy(), Popup::None).item == Item::Kit);
+    CHECK(l.hitTest(l.kit.cx(), l.kit.cy(), Popup::Templates).item == Item::None);   // the dropdown hit-tests itself
 }
 
 TEST(open_popups_own_the_pointer)
@@ -706,6 +711,98 @@ TEST(the_note_slider_and_wheel_skip_notes_of_other_tracks)
     CHECK_EQ(snapValue(m, kick, FieldKey::TrackNote, 38, 1), 40);    // wheel up from 37 lands past Snare and Clap
     CHECK_EQ(snapValue(m, kick, FieldKey::TrackNote, 39, -1), 37);
     CHECK_EQ(snapValue(m, kick, FieldKey::TrackChannel, 5, 1), 5);   // other fields are untouched
+}
+
+static std::vector<TemplateEntry> someTemplates(int user)
+{
+    std::vector<TemplateEntry> v = {{"bitwig-v8-edrums-01", "Bitwig v8 E-drums Kit 01", false}, {"other", "Other kit", false}};
+    for (int i = 0; i < user; ++i) v.push_back({"mine-" + std::to_string(i), "Mine " + std::to_string(i), true});
+    return v;
+}
+
+TEST(template_dropdown_lists_entries_by_section)
+{
+    const EditorLayout l = layout(EditorLayout::kMinWidth, 600);
+    TemplateList t;
+    t.open(l.kit, l.width, l.height, someTemplates(2));
+    CHECK(t.isOpen());
+    CHECK(t.mode() == TemplateMode::List);
+    CHECK(t.panel.x >= EditorLayout::kPad && t.panel.right() <= l.width - EditorLayout::kPad + 0.01f);
+    CHECK(t.panel.y >= l.kit.bottom());
+    // Built-in header, 2 entries, My templates header, 2 entries
+    CHECK_EQ(t.rows().size(), 6);
+    CHECK(t.rows()[0].entry < 0 && t.rows()[3].entry < 0);
+    CHECK_EQ(t.maxScroll(), 0.0f);
+    const Rect r1 = t.row(1);
+    TemplateHit h = t.hitTest(r1.x + 20, r1.cy());
+    CHECK(h.part == TemplatePart::Entry); CHECK_EQ(h.index, 0);
+    CHECK(t.deleteBox(1).w == 0);   // built-ins cannot be deleted
+    const Rect d = t.deleteBox(4);
+    CHECK(d.w > 0);
+    h = t.hitTest(d.cx(), d.cy());
+    CHECK(h.part == TemplatePart::Delete); CHECK_EQ(h.index, 2);
+    h = t.hitTest(t.row(4).x + 20, t.row(4).cy());
+    CHECK(h.part == TemplatePart::Entry); CHECK_EQ(h.index, 2);
+    CHECK(t.hitTest(t.row(0).cx(), t.row(0).cy()).part == TemplatePart::Panel);   // a header
+    CHECK(t.hitTest(t.saveRow.cx(), t.saveRow.cy()).part == TemplatePart::SaveRow);
+    CHECK(t.hitTest(t.panel.x - 2, t.panel.y + 4).part == TemplatePart::None);
+
+    // no user templates yet: the section still shows (it explains where saved ones go)
+    t.setEntries(someTemplates(0));
+    CHECK_EQ(t.rows().size(), 4);
+}
+
+TEST(template_dropdown_scrolls_when_it_does_not_fit)
+{
+    const EditorLayout l = layout(EditorLayout::kMinWidth, EditorLayout::kMinHeight);
+    TemplateList t;
+    t.open(l.kit, l.width, l.height, someTemplates(20));
+    CHECK(t.panel.bottom() <= l.height);
+    CHECK(t.maxScroll() > 0);
+    t.scrollBy(1e6f);
+    CHECK_EQ(t.scroll, t.maxScroll());
+    const int last = static_cast<int>(t.rows().size()) - 1;
+    CHECK(t.row(last).bottom() <= t.list.bottom() + 0.01f);
+    const TemplateHit h = t.hitTest(t.row(last).x + 20, t.row(last).cy());
+    CHECK(h.part == TemplatePart::Entry); CHECK_EQ(h.index, 21);
+    // rows scrolled out of the list are not hit
+    CHECK(t.hitTest(t.list.x + 20, t.list.y - 1).part != TemplatePart::Entry);
+    t.scrollBy(-1e6f);
+    CHECK_EQ(t.scroll, 0.0f);
+}
+
+TEST(template_dropdown_save_and_confirm_modes)
+{
+    const EditorLayout l = layout(EditorLayout::kMinWidth, EditorLayout::kMinHeight);
+    TemplateList t;
+    t.open(l.kit, l.width, l.height, someTemplates(1));
+    t.setMode(TemplateMode::Save);
+    CHECK(t.panel.bottom() <= l.height);
+    CHECK(t.hitTest(t.field.cx(), t.field.cy()).part == TemplatePart::Field);
+    CHECK(t.hitTest(t.ok.cx(), t.ok.cy()).part == TemplatePart::Ok);
+    CHECK(t.hitTest(t.cancel.cx(), t.cancel.cy()).part == TemplatePart::Cancel);
+    CHECK(t.ok.right() <= t.cancel.x);
+    t.setMode(TemplateMode::Confirm);
+    CHECK(t.field.w == 0 && t.line2.w > 0);
+    CHECK(t.hitTest(t.ok.cx(), t.ok.cy()).part == TemplatePart::Ok);
+    t.setMode(TemplateMode::List);
+    CHECK(t.hitTest(t.saveRow.cx(), t.saveRow.cy()).part == TemplatePart::SaveRow);
+    t.place(layout(1400, 500).kit, 1400, 500);   // a resize keeps the mode and follows the button
+    CHECK(t.mode() == TemplateMode::List);
+    CHECK(t.panel.y >= layout(1400, 500).kit.bottom());
+}
+
+TEST(template_commands_reach_the_bridge)
+{
+    Model m = defaultModel(); Bridge b(m);
+    CHECK(templateNeedsConfirm(m.bank[0]));    // the default pattern has a groove
+    CHECK(!templateNeedsConfirm(m.bank[1]));
+    CHECK(ok(b.handle(cmd::applyTemplate(1, "bitwig-v8-edrums-01").c_str())));
+    CHECK_EQ(m.bank[1].trackCount, 12);
+    CHECK(!ok(b.handle(cmd::applyTemplate(1, "missing").c_str())));
+    CHECK(json::parse(cmd::saveTemplate(3, "Mi kit", true)) == json({{"version", 1}, {"type", "saveTemplate"}, {"index", 3}, {"name", "Mi kit"}, {"overwrite", true}}));
+    CHECK(json::parse(cmd::saveTemplate(3, "Mi kit", false)).count("overwrite") == 0);
+    CHECK(json::parse(cmd::deleteTemplate("mi-kit")) == json({{"version", 1}, {"type", "deleteTemplate"}, {"template", "mi-kit"}}));
 }
 
 int main() { return testfw::runAll(); }
