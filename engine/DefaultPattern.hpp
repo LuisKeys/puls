@@ -1,6 +1,7 @@
 #pragma once
 #include "Pattern.hpp"
 #include <cstring>
+#include <initializer_list>
 
 namespace puls {
 

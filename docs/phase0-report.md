@@ -34,3 +34,10 @@ restores the counter (UI now requests state with `hello` on load, since DPF push
   [t0-0.99 sample, t1-0.99 sample) contains it, so output is identical for any block size (tested: 1..4096).
 - `RestartOnStart` anchors the grids at the start position and re-anchors after a position jump or loop wrap; `HostAbsolute` anchors at position 0.
 - Not yet: pattern switching (Phase 4); notes of a track muted mid-note end at their gate rather than being cut.
+
+# Phase 2 notes (model, bridge, minimal UI)
+- New layers: `model/` (Model), `state/` (versioned JSON, strict load), `bridge/` (typed commands -> events), `engine/Snapshot*.hpp` (RT handoff). Persisted state is now `{"schemaVersion":1,"pattern":...,"settings":...}`; the Phase 0 counter/ping are gone.
+- `Sequencer::playhead(i)` reports each track's step index; the UI side sends `playheads` (<=30 Hz, only on change) and `transport`.
+- UI: sticky label column, 64-step scrolling grid (16 visible), per-cell DOM updates, click toggles, vertical drag edits velocity, toolbar (enable, resolution, swing, track +/-, anchor setting).
+- Verified (macOS arm64, headless): clean `scripts/build.sh`; engine + bridge unit tests (state round trip, corrupt-state rejection, command validation/atomicity, track add/remove, playheads, triple-buffer under a producer thread); `ClapLoadTest` incl. state save/load/corrupt-load round trip and note output from the default pattern.
+- **Pending (needs Bitwig, not verified):** UI renders and is usable in the WebView; clicking steps changes the notes heard; drag edits velocity; playhead animates; resolution/swing/length/add/remove track; settings panel; project save/reopen restores the edited pattern; closing the UI keeps playing; idle CPU with UI hidden. The TypeScript is type-checked and bundled but has not been run in a browser/WebView, and the UI has no automated tests.

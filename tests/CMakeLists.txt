@@ -15,3 +15,13 @@ add_executable(engine_tests EngineTests.cpp)
 target_link_libraries(engine_tests puls_engine)
 target_compile_options(engine_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
 add_test(NAME engine COMMAND engine_tests)
+
+add_library(puls_app STATIC ../state/Serialization.cpp ../bridge/Bridge.cpp)
+target_include_directories(puls_app PUBLIC ../model ../state ../bridge ../third_party)
+target_link_libraries(puls_app PUBLIC puls_engine)
+target_compile_options(puls_app PRIVATE -Wall -Wextra -Wno-unused-parameter)
+
+add_executable(bridge_tests BridgeTests.cpp)
+target_link_libraries(bridge_tests puls_app)
+target_compile_options(bridge_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
+add_test(NAME bridge COMMAND bridge_tests)

@@ -41,6 +41,9 @@ public:
     uint32_t droppedNoteOns() const noexcept { return dropped_; }
     uint32_t soundingNotes() const noexcept { return activeCount_; }
 
+    // Step index (into Track::steps) each track is at, at the start of the last processed block; -1 when stopped.
+    int playhead(int track) const noexcept { return track >= 0 && track < kMaxTracks ? playheads_[track] : -1; }
+
 private:
     struct Item {
         int64_t  time;
@@ -56,6 +59,7 @@ private:
     void emit(uint8_t status, uint8_t channel, uint8_t note, uint8_t velocity, uint32_t frame) noexcept;
     void releaseAll() noexcept;
     uint32_t frameOf(int64_t time, int64_t t0, double unitsPerSample, uint32_t frames) const noexcept;
+    void updatePlayheads(const Pattern& p, int64_t t0) noexcept;
     void generate(const Pattern& p, int64_t lo, int64_t hi, uint32_t& order, uint32_t& n) noexcept;
 
     AnchorMode anchorMode_ = AnchorMode::RestartOnStart;
@@ -69,6 +73,7 @@ private:
     uint32_t   dropped_ = 0;
     uint32_t   eventCount_ = 0;
 
+    std::array<int16_t, kMaxTracks> playheads_{};
     std::array<uint32_t, 16 * 128> active_{};
     std::array<Pending, kMaxPendingOffs> pending_{};
     std::array<MidiMsg, kMaxEvents> events_{};

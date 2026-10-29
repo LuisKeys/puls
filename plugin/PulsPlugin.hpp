@@ -1,7 +1,9 @@
 #pragma once
 #include "DistrhoPlugin.hpp"
-#include "DefaultPattern.hpp"
+#include "Bridge.hpp"
+#include "Model.hpp"
 #include "Sequencer.hpp"
+#include "SnapshotExchange.hpp"
 #include <atomic>
 #include <mutex>
 #include <string>
@@ -9,17 +11,20 @@
 
 START_NAMESPACE_DISTRHO
 
-// Phase 0 spike plugin: one note per quarter, ping round-trip, persisted counter.
+// Puls: owns the Model (main thread), publishes EngineSnapshots to the audio thread, runs the Sequencer in run().
 class PulsPlugin : public Plugin
 {
 public:
     PulsPlugin();
+    ~PulsPlugin() override = default;
 
     // Telemetry (audio thread writes, UI thread reads).
     std::atomic<bool>   telPlaying{false};
     std::atomic<double> telBpm{0.0};
     std::atomic<double> telQuarterPos{0.0};
     std::atomic<bool>   telBbtValid{false};
+    std::atomic<int8_t> telPlayhead[puls::kMaxTracks];   // step index per track, -1 when stopped
+    std::atomic<uint8_t> telTrackCount{0};
 
     // Main-thread outbox, drained by the UI in uiIdle.
     std::vector<std::string> drainOutbox();
@@ -43,15 +48,19 @@ protected:
 
 private:
     void pushEvent(const std::string& json);
-    void handleCommand(const char* json);
+    void publish();
 
-    std::atomic<int>  fCounter{0};
-    std::mutex        fOutboxMutex;           // main thread only, never taken in run()
+    // Main thread only.
+    puls::Model  fModel;
+    puls::Bridge fBridge;
+    std::mutex   fOutboxMutex;           // guards fOutbox only; never taken in run()
     std::vector<std::string> fOutbox;
 
-    // audio-thread state
+    // Main thread -> audio thread.
+    puls::SnapshotExchange<puls::EngineSnapshot> fExchange;
+
+    // Audio thread only.
     puls::Sequencer fSeq;
-    puls::Pattern   fPattern;  // Phase 1: fixed default pattern until the UI/bridge edits it
 };
 
 END_NAMESPACE_DISTRHO

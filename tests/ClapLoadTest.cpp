@@ -97,13 +97,29 @@ int main(int argc, char** argv)
         CHECK(a.data == c.data);
         CHECK(a.data.find("\"schemaVersion\":1") != std::string::npos);
 
-        // Restore a non-default counter in DPF's state container format and read it back.
-        const std::string payload("__dpf_state_begin__\0state\0{\"schemaVersion\":1,\"counter\":7}\0__dpf_state_end__\0\xfe", 77);
+        // Restore a non-default pattern in DPF's state container format and read it back.
+        const std::string json = "{\"schemaVersion\":1,\"pattern\":{\"name\":\"Restored\",\"seed\":1,\"tracks\":"
+                                 "[{\"id\":3,\"name\":\"Zed\",\"note\":60,\"length\":5,\"steps\":[{\"active\":true,\"velocity\":99}]}]},"
+                                 "\"settings\":{\"anchorMode\":\"host\",\"enabled\":true}}";
+        std::string payload = std::string("__dpf_state_begin__") + '\0' + "state" + '\0' + json + '\0' + "__dpf_state_end__" + '\0' + '\xfe';
         Buf d; d.data = payload; clap_istream_t isd{&d, rd};
         CHECK(st->load(p, &isd));
         Buf e; clap_ostream_t ose{&e, wr};
         CHECK(st->save(p, &ose));
-        CHECK(e.data.find("\"counter\":7") != std::string::npos);
+        CHECK(e.data.find("\"name\":\"Zed\"") != std::string::npos);
+        CHECK(e.data.find("\"anchorMode\":\"host\"") != std::string::npos);
+
+        // Corrupt state is rejected: the previous (restored) model stays.
+        std::string bad = std::string("__dpf_state_begin__") + '\0' + "state" + '\0' + "{\"schemaVersion\":1,\"pattern\":{\"tracks\":[{\"id\":1,\"length\":999}]}}" + '\0' + "__dpf_state_end__" + '\0' + '\xfe';
+        Buf f; f.data = bad; clap_istream_t isf{&f, rd};
+        st->load(p, &isf);
+        Buf g; clap_ostream_t osg{&g, wr};
+        CHECK(st->save(p, &osg));
+        CHECK(g.data == e.data);
+
+        // Back to the default model for the playback checks below.
+        Buf h; h.data = a.data; clap_istream_t ish{&h, rd};
+        CHECK(st->load(p, &ish));
     }
 
     const double sr = 44100.0;

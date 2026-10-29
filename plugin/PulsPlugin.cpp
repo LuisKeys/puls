@@ -1,4 +1,5 @@
 #include "PulsPlugin.hpp"
+#include "Serialization.hpp"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -8,10 +9,22 @@ START_NAMESPACE_DISTRHO
 
 static constexpr const char* kStateKey = "state";
 static constexpr const char* kCmdKey   = "cmd";
+static constexpr size_t kMaxOutbox = 512;
 
-PulsPlugin::PulsPlugin() : Plugin(0, 0, 1)
+PulsPlugin::PulsPlugin()
+    : Plugin(0, 0, 1), fModel(puls::makeDefaultModel()), fBridge(fModel)
 {
-    puls::makeDefaultPattern(fPattern);
+    for (auto& p : telPlayhead)
+        p.store(-1, std::memory_order_relaxed);
+    publish();
+}
+
+void PulsPlugin::publish()
+{
+    puls::EngineSnapshot& slot = fExchange.writeSlot();
+    slot.pattern = fModel.pattern;
+    slot.settings = fModel.settings;
+    fExchange.publish();
 }
 
 std::vector<std::string> PulsPlugin::drainOutbox()
@@ -25,16 +38,23 @@ std::vector<std::string> PulsPlugin::drainOutbox()
 void PulsPlugin::pushEvent(const std::string& json)
 {
     std::lock_guard<std::mutex> lock(fOutboxMutex);
-    if (fOutbox.size() < 256)
-        fOutbox.push_back(json);
+    if (fOutbox.size() >= kMaxOutbox)
+    {
+        // The UI is not draining (hidden/closed): its view is stale anyway, so replace the backlog by a full resync.
+        fOutbox.clear();
+        fOutbox.push_back(fBridge.initEvent());
+        return;
+    }
+    fOutbox.push_back(json);
 }
 
 void PulsPlugin::initState(uint32_t index, State& state)
 {
     if (index != 0)
         return;
+    static const std::string defaultState = puls::saveState(puls::makeDefaultModel());
     state.key = kStateKey;
-    state.defaultValue = "{\"schemaVersion\":1,\"counter\":0}";
+    state.defaultValue = defaultState.c_str();
     state.label = "State";
     state.hints = kStateIsHostReadable | kStateIsHostWritable;
 }
@@ -43,50 +63,32 @@ String PulsPlugin::getState(const char* key) const
 {
     if (std::strcmp(key, kStateKey) != 0)
         return String();
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "{\"schemaVersion\":1,\"counter\":%d}", fCounter.load());
-    return String(buf);
+    return String(puls::saveState(fModel).c_str());
 }
 
 void PulsPlugin::setState(const char* key, const char* value)
 {
     if (std::strcmp(key, kStateKey) == 0)
     {
-        // Phase 0: minimal parse. Real implementation uses typed, validated JSON (state/).
-        const char* c = std::strstr(value, "\"counter\":");
-        const int parsed = c != nullptr ? std::atoi(c + 10) : 0;
-        fCounter.store(parsed < 0 ? 0 : parsed);
+        std::string err;
+        if (puls::loadState(value, fModel, err))
+        {
+            publish();
+            pushEvent(fBridge.initEvent());   // an already-open UI shows the restored project
+        }
+        else
+        {
+            pushEvent(puls::Bridge::errorEvent("restore", err));
+        }
     }
     else if (std::strcmp(key, kCmdKey) == 0)
     {
-        handleCommand(value);
+        puls::Bridge::Result r = fBridge.handle(value);
+        if (r.changed)
+            publish();
+        for (const std::string& ev : r.events)
+            pushEvent(ev);
     }
-}
-
-void PulsPlugin::handleCommand(const char* json)
-{
-    if (std::strstr(json, "\"version\":1") == nullptr)
-    {
-        pushEvent("{\"version\":1,\"type\":\"error\",\"message\":\"unsupported version\"}");
-        return;
-    }
-    if (std::strstr(json, "\"type\":\"hello\"") != nullptr)
-    {
-        // UI (re)opened: send full state, since DPF only pushes restored state before the page is ready.
-        char buf[128];
-        std::snprintf(buf, sizeof(buf), "{\"version\":1,\"type\":\"restored\",\"counter\":%d}", fCounter.load());
-        pushEvent(buf);
-        return;
-    }
-    if (std::strstr(json, "\"type\":\"ping\"") != nullptr)
-    {
-        const int n = ++fCounter;
-        char buf[128];
-        std::snprintf(buf, sizeof(buf), "{\"version\":1,\"type\":\"pong\",\"counter\":%d}", n);
-        pushEvent(buf);
-        return;
-    }
-    pushEvent("{\"version\":1,\"type\":\"error\",\"message\":\"unknown command\"}");
 }
 
 void PulsPlugin::activate()
@@ -115,7 +117,17 @@ void PulsPlugin::run(const float**, float**, uint32_t frames)
     telQuarterPos.store(q0, std::memory_order_relaxed);
     telBbtValid.store(pos.bbt.valid, std::memory_order_relaxed);
 
-    fSeq.process(fPattern, puls::TransportInfo{pos.playing && pos.bbt.valid, q0, bpm, getSampleRate()}, frames);
+    bool fresh;
+    const puls::EngineSnapshot& snap = fExchange.acquire(fresh);
+    fSeq.setAnchorMode(snap.settings.anchorMode);
+
+    // A disabled sequencer is a stopped one: sounding notes are released and nothing is emitted.
+    const bool play = snap.settings.enabled && pos.playing && pos.bbt.valid;
+    fSeq.process(snap.pattern, puls::TransportInfo{play, q0, bpm, getSampleRate()}, frames);
+
+    telTrackCount.store(snap.pattern.trackCount, std::memory_order_relaxed);
+    for (int i = 0; i < puls::kMaxTracks; ++i)
+        telPlayhead[i].store(static_cast<int8_t>(fSeq.playhead(i)), std::memory_order_relaxed);
 
     for (uint32_t i = 0; i < fSeq.eventCount(); ++i)
     {
