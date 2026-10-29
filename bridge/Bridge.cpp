@@ -206,6 +206,11 @@ Bridge::Result Bridge::handle(const char* text)
         const bool preview = prit != cmd.end() && prit->get<bool>();
         Track copy = *t;
         if (!readTrackProps(*pit, copy, err)) return fail();
+        if (copy.note != t->note || copy.channel != t->channel)
+            if (const Track* o = noteOwner(model_.pattern(), copy.note, copy.channel, t->id)) {
+                err = "note " + std::to_string(copy.note) + " is already used by " + o->name + " on this channel";
+                return fail();
+            }
         json after = trackToJson(copy, false);
         const bool same = after == trackToJson(*t, false);
         *t = copy;
@@ -219,6 +224,13 @@ Bridge::Result Bridge::handle(const char* text)
             const int vel = std::clamp((100 * t->velocityPct) / 100, 1, 127);
             r.auditions.push_back(AuditionNote{t->channel, t->note, static_cast<uint8_t>(vel)});
         }
+    } else if (type == "previewNote") {
+        // Plays `note` on the track's channel without changing anything (the note keyboard's occupied keys).
+        int note = 0;
+        if (!readTrackRef(cmd, model_, t, err) || !readIndex(cmd, "note", 128, note, err)) return fail();
+        const int vel = std::clamp((100 * t->velocityPct) / 100, 1, 127);
+        r.auditions.push_back(AuditionNote{t->channel, static_cast<uint8_t>(note), static_cast<uint8_t>(vel)});
+        undoable = false;
     } else if (type == "addTrack") {
         Pattern& p = model_.pattern();
         if (p.trackCount >= kMaxTracks) { err = "pattern already has 16 tracks"; return fail(); }
@@ -227,9 +239,15 @@ Bridge::Result Bridge::handle(const char* text)
         const int n = p.trackCount;
         std::snprintf(nt.name, sizeof(nt.name), "Track %d", n + 1);
         nt.color = kNewTrackColors[n % 8];
-        nt.note = static_cast<uint8_t>(36 + n > 127 ? 127 : 36 + n);
+        int note = freeNote(p, 36, 1, nt.channel, 0);   // the first free note from C1 up
+        if (note < 0) note = freeNote(p, 35, -1, nt.channel, 0);
+        nt.note = static_cast<uint8_t>(std::max(note, 0));
         const auto pit = cmd.find("props");
         if (pit != cmd.end() && !readTrackProps(*pit, nt, err)) return fail();
+        if (const Track* o = noteOwner(p, nt.note, nt.channel, 0)) {
+            err = "note " + std::to_string(nt.note) + " is already used by " + o->name + " on this channel";
+            return fail();
+        }
         p.tracks[p.trackCount++] = nt;
         ++model_.nextTrackId;
         selectedChanged = true;

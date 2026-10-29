@@ -20,7 +20,7 @@ const HelpRow kTracks[] = {
                    "Different lengths make polyrhythms"},
     {"Right-click a label", "Name, color, MIDI note, channel, resolution, length, phase, swing, scaling, mute, solo"},
     {"Piano button", "Note keyboard (toolbar, or next to MIDI note in the track menu): pick a track, click a key to set "
-                     "its note; the key always plays it. Dots in the track colors mark each track's note; \xE2\x80\xB9 \xE2\x80\xBA or the "
+                     "its note; the key always plays it. A key another track uses (same channel) only plays: one track per note. Dots in the track colors mark each track's note; \xE2\x80\xB9 \xE2\x80\xBA or the "
                      "wheel change octave, Up/Down pick the track, Left/Right move its note, Esc closes"},
     {"Toolbar + / \xE2\x88\x92", "Add a track / remove the selected one (asks first)"},
 };

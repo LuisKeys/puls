@@ -640,4 +640,72 @@ TEST(choosing_a_note_previews_it_and_the_same_note_adds_no_undo_step)
     CHECK_EQ((int)t.note, 50);                      // rejected atomically
 }
 
+TEST(a_note_belongs_to_one_track_per_channel)
+{
+    Model m = defaultModel();
+    Bridge b(m);
+    Pattern& p = m.pattern();
+    Track& kick = p.tracks[0];   // 36
+    Track& snare = p.tracks[1];  // 38
+    CHECK(noteOwner(p, 38, 0, kick.id) == &snare);
+    CHECK(noteOwner(p, 38, 0, snare.id) == nullptr);
+    CHECK(noteOwner(p, 38, 1, kick.id) == nullptr);
+    CHECK_EQ(freeNote(p, 38, 1, 0, kick.id), 40);   // 39 is Clap
+    CHECK_EQ(freeNote(p, 39, -1, 0, kick.id), 37);
+    CHECK_EQ(freeNote(p, 38, 1, 0, snare.id), 38);  // its own note is free for it
+
+    // Taking another track's note is rejected and changes nothing.
+    Bridge::Result r = b.handle(cmd::modifyTrack(kick.id, {{"note", 38}}, 0, true).c_str());
+    CHECK(!ok(r) && r.auditions.empty());
+    CHECK_EQ((int)kick.note, 36);
+    CHECK(json::parse(r.events[0]).value("message", "").find("Snare") != std::string::npos);
+    // On another channel the same note is fine; moving back to a taken one is not.
+    CHECK(ok(b.handle(cmd::modifyTrack(kick.id, {{"note", 38}, {"channel", 9}}).c_str())));
+    CHECK(!ok(b.handle(cmd::modifyTrack(kick.id, {{"channel", 0}}).c_str())));
+    CHECK_EQ((int)kick.channel, 9);
+
+    // A project that already repeats a note still loads and its tracks stay editable.
+    snare.channel = 9;
+    CHECK(noteOwner(p, 38, 9, kick.id) == &snare);
+    CHECK(ok(b.handle(cmd::modifyTrack(kick.id, {{"name", "Kick 2"}}).c_str())));
+
+    // previewNote plays any note on the track's channel, with ♪ off too, and changes nothing.
+    m.settings.audition = false;
+    r = b.handle(cmd::previewNote(kick.id, 39).c_str());
+    CHECK(ok(r) && !r.changed && !m.history.canRedo());
+    CHECK_EQ(r.auditions.size(), 1u);
+    CHECK_EQ((int)r.auditions[0].note, 39);
+    CHECK_EQ((int)r.auditions[0].channel, 9);
+    CHECK(!ok(b.handle(cmd::previewNote(kick.id, 128).c_str())));
+}
+
+TEST(new_tracks_take_the_first_free_note)
+{
+    Model m = defaultModel();
+    Bridge b(m);
+    while (m.pattern().trackCount < kMaxTracks) CHECK(ok(b.handle(cmd::addTrack().c_str())));
+    const Pattern& p = m.pattern();
+    for (int i = 0; i < p.trackCount; ++i)
+        CHECK(noteOwner(p, p.tracks[i].note, p.tracks[i].channel, p.tracks[i].id) == nullptr);
+    CHECK_EQ((int)p.tracks[8].note, 37);             // 36 is Kick
+    CHECK_EQ((int)p.tracks[9].note, 40);             // 38 and 39 are Snare and Clap
+    Model c = defaultModel();
+    Bridge bc(c);
+    CHECK(!ok(bc.handle("{\"version\":1,\"type\":\"addTrack\",\"props\":{\"note\":36}}")));
+    CHECK_EQ(c.pattern().trackCount, 8);
+}
+
+TEST(the_note_slider_and_wheel_skip_notes_of_other_tracks)
+{
+    const Model m = defaultModel();
+    const Pattern& p = m.pattern();
+    const MenuTarget kick = trackTarget(m, p.tracks[0].id);
+    CHECK_EQ(snapValue(m, kick, FieldKey::TrackNote, 38, 0), 37);    // nearest free, below first on a tie
+    CHECK_EQ(snapValue(m, kick, FieldKey::TrackNote, 39, 0), 40);
+    CHECK_EQ(snapValue(m, kick, FieldKey::TrackNote, 36, 0), 36);    // its own note
+    CHECK_EQ(snapValue(m, kick, FieldKey::TrackNote, 38, 1), 40);    // wheel up from 37 lands past Snare and Clap
+    CHECK_EQ(snapValue(m, kick, FieldKey::TrackNote, 39, -1), 37);
+    CHECK_EQ(snapValue(m, kick, FieldKey::TrackChannel, 5, 1), 5);   // other fields are untouched
+}
+
 int main() { return testfw::runAll(); }

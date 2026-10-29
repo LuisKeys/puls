@@ -253,6 +253,22 @@ std::string fieldValueText(FieldKey k, int value)
     return std::to_string(value);
 }
 
+int snapValue(const Model& m, const MenuTarget& t, FieldKey k, int value, int dir)
+{
+    const Track* tr = findTrack(m, t);
+    if (k != FieldKey::TrackNote || tr == nullptr) return value;
+    const Pattern& p = m.bank[t.pattern];
+    value = std::clamp(value, 0, 127);
+    if (dir != 0) {
+        const int n = freeNote(p, value, dir > 0 ? 1 : -1, tr->channel, tr->id);
+        return n >= 0 ? n : tr->note;
+    }
+    for (int d = 0; d <= 127; ++d)
+        for (int n : {value - d, value + d})
+            if (n >= 0 && n <= 127 && noteOwner(p, n, tr->channel, tr->id) == nullptr) return n;
+    return tr->note;
+}
+
 std::string fieldCommand(const Model& m, const MenuTarget& t, FieldKey k, int value, const std::string& text, uint32_t gesture)
 {
     const FieldDef* def = findDef(t.kind, k);

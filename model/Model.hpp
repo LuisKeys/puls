@@ -29,6 +29,25 @@ struct Model {
     }
 };
 
+// One track per note and channel within a pattern (patterns loaded from older projects may still repeat one).
+// The track other than `except` (a track id) that plays `note` on `channel`, or nullptr.
+inline const Track* noteOwner(const Pattern& p, int note, int channel, uint32_t except) noexcept
+{
+    for (int i = 0; i < p.trackCount; ++i) {
+        const Track& t = p.tracks[i];
+        if (t.id != except && t.note == note && t.channel == channel) return &t;
+    }
+    return nullptr;
+}
+
+// The first note from `from` in direction `dir` (+1 / -1) that no other track uses on `channel`; -1 if none.
+inline int freeNote(const Pattern& p, int from, int dir, int channel, uint32_t except) noexcept
+{
+    for (int n = from; n >= 0 && n <= 127; n += dir)
+        if (noteOwner(p, n, channel, except) == nullptr) return n;
+    return -1;
+}
+
 inline void makeDefaultBank(Model& m)
 {
     makeDefaultPattern(m.bank[0]);
