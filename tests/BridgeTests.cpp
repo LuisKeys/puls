@@ -4,6 +4,7 @@
 #include "SnapshotExchange.hpp"
 #include "TestHelpers.hpp"
 #include <atomic>
+#include <random>
 #include <thread>
 
 using namespace puls;
@@ -432,6 +433,135 @@ TEST(edit_steps_batch_is_atomic_and_one_undo_step)
     };
     for (const char* x : bad) { r = cmd(b, x); CHECK(typeOf(r) == "error"); CHECK(!r.changed); }
     CHECK(saveState(m) == before);
+}
+
+// ---- Phase 5: fuzzing ----
+
+// Every field of every pattern is inside the ranges the engine and the UI assume.
+static bool modelValid(const Model& m)
+{
+    if (m.selected < 0 || m.selected >= kBankSize) return false;
+    for (const Pattern& p : m.bank) {
+        if (p.trackCount > kMaxTracks || std::memchr(p.name, 0, sizeof(p.name)) == nullptr) return false;
+        for (int t = 0; t < p.trackCount; ++t) {
+            const Track& tr = p.tracks[t];
+            if (tr.id == 0 || tr.note > 127 || tr.channel > 15 || tr.length < 1 || tr.length > kMaxSteps || tr.phase >= kMaxSteps ||
+                int(tr.resolution) >= int(Resolution::Count) || tr.velocityPct > 200 || tr.probabilityPct > 100 || tr.swing > 75 ||
+                tr.durationPct < 1 || tr.durationPct > 100 || std::memchr(tr.name, 0, sizeof(tr.name)) == nullptr)
+                return false;
+            for (int u = 0; u < t; ++u) if (p.tracks[u].id == tr.id) return false;
+            for (const Step& st : tr.steps)
+                if (st.velocity < 1 || st.velocity > 127 || st.probability > 100 || st.ratchets < 1 || st.ratchets > 8 ||
+                    st.microtiming < -50 || st.microtiming > 50 || st.gate < 1 || st.gate > 100)
+                    return false;
+        }
+    }
+    return true;
+}
+
+static bool roundTrips(const Model& m)
+{
+    Model c; std::string err; const std::string a = saveState(m);
+    return loadState(a.c_str(), c, err) && saveState(c) == a;
+}
+
+TEST(fuzz_commands_never_break_the_model)
+{
+    std::mt19937 rng(12345);
+    auto R = [&](int lo, int hi) { return std::uniform_int_distribution<int>(lo, hi)(rng); };
+    const char* types[] = {"hello", "toggleStep", "setStepVelocity", "modifyStep", "modifyTrack", "editSteps", "addTrack", "removeTrack",
+                           "setSettings", "selectPattern", "renamePattern", "copyPattern", "pastePattern", "duplicatePattern",
+                           "clearPattern", "undo", "redo", "bogus"};
+    const char* trackKeys[] = {"name", "color", "note", "channel", "length", "resolution", "phase", "velocityPct", "probabilityPct",
+                               "swing", "durationPct", "mute", "solo"};
+    const char* stepKeys[] = {"active", "velocity", "probability", "ratchets", "microtiming", "gate"};
+    // Mostly plausible values, regularly hostile ones: wrong types, out of range, huge, negative, floats, unicode.
+    auto value = [&]() -> json {
+        switch (R(0, 17)) {
+            case 0: return nullptr; case 1: return true; case 2: return "x"; case 3: return -1; case 4: return 0; case 5: return 1;
+            case 6: return 15; case 7: return 16; case 8: return 63; case 9: return 64; case 10: return 127; case 11: return 128;
+            case 12: return 4294967296ull; case 13: return 1.5; case 14: return "#12ab34"; case 15: return "1/8T";
+            case 16: return "\xc3\xa9\xe2\x82\xac"; default: return R(-60, 210);
+        }
+    };
+    auto props = [&](const char* const* keys, int n) {
+        json o = json::object();
+        for (int i = R(0, 4); i > 0; --i) o[keys[R(0, n - 1)]] = value();
+        return o;
+    };
+    Model m = defaultModel(); Bridge b(m);
+    int errors = 0, applied = 0;
+    for (int it = 0; it < 6000; ++it) {
+        json c = json::object();
+        if (R(0, 30) != 0) c["version"] = 1; else c["version"] = value();
+        c["type"] = R(0, 40) == 0 ? value() : json(types[R(0, 17)]);
+        if (R(0, 6) != 0) { const auto& tr = m.pattern().tracks; c["track"] = R(0, 3) == 0 ? value() : json(tr[R(0, std::max(0, m.pattern().trackCount - 1))].id); }
+        if (R(0, 4) != 0) c["step"] = R(0, 3) == 0 ? value() : json(R(0, 63));
+        if (R(0, 4) != 0) c["index"] = R(0, 3) == 0 ? value() : json(R(0, 15));
+        if (R(0, 2) == 0) c["velocity"] = value();
+        if (R(0, 3) == 0) c["gesture"] = R(0, 3) == 0 ? value() : json(R(0, 5));
+        if (R(0, 3) == 0) c["name"] = value();
+        if (R(0, 3) == 0) c["quantize"] = R(0, 2) == 0 ? value() : json("bar");
+        if (R(0, 1) == 0) c["props"] = R(0, 8) == 0 ? value() : (R(0, 1) ? props(trackKeys, 13) : props(stepKeys, 6));
+        if (R(0, 5) == 0) c["settings"] = R(0, 3) == 0 ? value() : json{{"enabled", value()}, {"anchorMode", value()}, {"patternSwitch", value()}};
+        if (R(0, 6) == 0) {
+            json cells = json::array();
+            for (int i = R(0, 6); i > 0; --i) cells.push_back(R(0, 10) == 0 ? value() : json{{"track", R(0, 3) ? json(m.pattern().tracks[0].id) : value()}, {"step", R(0, 3) ? json(R(0, 63)) : value()}, {"props", props(stepKeys, 6)}});
+            c["cells"] = cells;
+        }
+        const std::string text = R(0, 80) == 0 ? c.dump().substr(0, R(0, 20)) : c.dump();   // sometimes truncated JSON
+        const auto r = b.handle(text.c_str());
+        for (const std::string& ev : r.events) {
+            const json e = json::parse(ev, nullptr, false);
+            CHECK(!e.is_discarded() && e.value("version", 0) == 1 && e.contains("type"));
+            errors += e.value("type", "") == "error";
+        }
+        applied += r.changed;
+        if (!modelValid(m)) { std::printf("    model invalid after: %s\n", text.c_str()); CHECK(false); break; }
+        if (it % 150 == 0 && !roundTrips(m)) { std::printf("    state does not round-trip after: %s\n", text.c_str()); CHECK(false); break; }
+    }
+    CHECK(roundTrips(m));
+    std::printf("    fuzz: %d commands rejected, %d applied\n", errors, applied);
+    CHECK(errors > 500); CHECK(applied > 500);   // the fuzzer actually exercises both paths
+}
+
+TEST(fuzz_state_documents_are_rejected_or_valid)
+{
+    std::mt19937 rng(777);
+    auto R = [&](size_t lo, size_t hi) { return std::uniform_int_distribution<size_t>(lo, hi)(rng); };
+    Model src = defaultModel(); { Bridge b(src); cmd(b, "{\"version\":1,\"type\":\"toggleStep\",\"track\":2,\"step\":7}"); }
+    const std::string good = saveState(src);
+    Model live = defaultModel();
+    const std::string liveBefore = saveState(live);
+    int accepted = 0, rejected = 0;
+    auto check = [&](const std::string& doc) {
+        Model m = live; std::string err;
+        const bool ok = loadState(doc.c_str(), m, err);
+        if (ok) { ++accepted; CHECK(modelValid(m)); CHECK(roundTrips(m)); }
+        else { ++rejected; CHECK(!err.empty()); CHECK(saveState(m) == liveBefore); }   // a rejected document leaves the model alone
+    };
+    for (size_t len = 0; len < good.size(); len += 37) check(good.substr(0, len));        // truncations
+    for (int i = 0; i < 4000; ++i) {                                                       // random byte damage
+        std::string d = good;
+        for (int k = (int)R(1, 4); k > 0; --k) {
+            const size_t pos = R(0, d.size() - 1);
+            switch (R(0, 3)) {
+                case 0: d[pos] = (char)R(0, 255); break;
+                case 1: d.erase(pos, R(1, 8)); break;
+                case 2: d.insert(pos, std::string(R(1, 4), "{}[]\":,-0123456789e"[R(0, 19)])); break;
+                default: d.replace(pos, std::min<size_t>(R(1, 6), d.size() - pos), R(0, 1) ? "999999999999" : "null"); break;
+            }
+        }
+        check(d);
+    }
+    // Hostile shapes: absurd nesting must not overflow the stack, huge numbers/strings must be rejected cleanly.
+    check(std::string(200000, '[') + std::string(200000, ']'));
+    check("{\"schemaVersion\":2,\"patterns\":" + std::string(200000, '[') + "}");
+    check("{\"schemaVersion\":2,\"patterns\":[{\"name\":\"" + std::string(1 << 20, 'a') + "\",\"tracks\":[]}]}");
+    check("{\"schemaVersion\":2,\"patterns\":[{\"tracks\":[{\"id\":1e999}]}]}");
+    check("{\"schemaVersion\":2,\"patterns\":[{\"tracks\":[{\"id\":-0}]}]}");
+    std::printf("    fuzz: %d documents accepted, %d rejected\n", accepted, rejected);
+    CHECK(rejected > 1000); CHECK(accepted >= 1);
 }
 
 int main() { return testfw::runAll(); }

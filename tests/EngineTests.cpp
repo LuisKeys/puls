@@ -1,9 +1,26 @@
 #include "TestFramework.hpp"
 #include "TestHelpers.hpp"
 #include "PatternSwitcher.hpp"
+#include "Snapshot.hpp"
+#include "SnapshotExchange.hpp"
 #include "SpscQueue.hpp"
+#include <atomic>
+#include <chrono>
+#include <cmath>
 #include <cstdlib>
+#include <limits>
+#include <new>
 #include <random>
+
+// Counts heap traffic while g_countAllocs is set, to prove the audio path never allocates or frees.
+static std::atomic<bool> g_countAllocs{false};
+static std::atomic<long> g_allocs{0};
+void* operator new(std::size_t n) { if (g_countAllocs) ++g_allocs; if (void* p = std::malloc(n ? n : 1)) return p; throw std::bad_alloc(); }
+void* operator new[](std::size_t n) { return operator new(n); }
+void operator delete(void* p) noexcept { if (g_countAllocs && p) ++g_allocs; std::free(p); }
+void operator delete[](void* p) noexcept { operator delete(p); }
+void operator delete(void* p, std::size_t) noexcept { operator delete(p); }
+void operator delete[](void* p, std::size_t) noexcept { operator delete(p); }
 
 using namespace th;
 
@@ -495,6 +512,150 @@ TEST(spsc_queue_preserves_order_and_reports_full)
     for (int i = 0; i < 4; ++i) { CHECK(q.pop(v)); CHECK_EQ(v, i); }
     CHECK(!q.pop(v));
     for (int i = 0; i < 10; ++i) { CHECK(q.push(i)); CHECK(q.pop(v)); CHECK_EQ(v, i); } // wraps
+}
+
+// ---- Phase 5: hardening ----
+
+// 16 tracks x 64 steps, every step active with 8 ratchets, all resolutions, swing, micro-timing, full gates.
+static Pattern worstCasePattern()
+{
+    Pattern p = emptyPattern(16);
+    p.seed = 99;
+    for (int t = 0; t < 16; ++t) {
+        Track& tr = p.tracks[t];
+        tr.length = 64; tr.resolution = Resolution(t % int(Resolution::Count)); tr.swing = 75; tr.durationPct = 100;
+        tr.channel = t % 3; tr.note = 36 + (t % 4);   // shared notes across tracks force retriggers
+        for (int i = 0; i < 64; ++i) {
+            Step& s = tr.steps[i]; s.active = true; s.ratchets = 8; s.gate = 100;
+            s.microtiming = (i % 3 == 0) ? -50 : (i % 3 == 1 ? 50 : 0); s.velocity = 1 + (i * 7 + t) % 127;
+        }
+    }
+    return p;
+}
+
+struct StressResult { std::vector<AbsEvent> events; uint32_t dropped = 0; double maxBlockUs = 0, avgBlockUs = 0; bool framesOk = true; };
+
+static StressResult stress(const Pattern& p, double bpm, double sr, uint32_t block, double seconds)
+{
+    StressResult r; Sequencer seq; double sumUs = 0; int64_t blocks = 0;
+    const int64_t total = (int64_t)(seconds * sr);
+    int64_t sample = 0;
+    for (; sample < total; sample += block) {
+        const uint32_t frames = (uint32_t)std::min<int64_t>(block, total - sample);
+        const TransportInfo tp{true, (double)sample * bpm / (60.0 * sr), bpm, sr};
+        const auto t0 = std::chrono::steady_clock::now();
+        seq.process(p, tp, frames);
+        const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+        sumUs += us; ++blocks; r.maxBlockUs = std::max(r.maxBlockUs, us);
+        for (uint32_t i = 0; i < seq.eventCount(); ++i) {
+            const MidiMsg& m = seq.events()[i];
+            r.framesOk = r.framesOk && m.frame < frames;
+            r.events.push_back({sample + m.frame, uint8_t(m.data[0] & 0xF0), uint8_t(m.data[0] & 15), m.data[1], m.data[2]});
+        }
+    }
+    seq.process(p, TransportInfo{false, 0, bpm, sr}, 64);   // stop: everything still sounding must be released
+    for (uint32_t i = 0; i < seq.eventCount(); ++i) { const MidiMsg& m = seq.events()[i]; r.events.push_back({total, uint8_t(m.data[0] & 0xF0), uint8_t(m.data[0] & 15), m.data[1], m.data[2]}); }
+    r.dropped = seq.droppedNoteOns();
+    r.avgBlockUs = sumUs / (double)blocks;
+    return r;
+}
+
+TEST(stress_worst_case_pattern_at_extreme_tempos_stays_valid_and_realtime)
+{
+    const Pattern p = worstCasePattern();
+    double worstRatio = 0;
+    for (double bpm : {20.0, 120.0, 999.0})
+        for (double sr : {44100.0, 192000.0})
+            for (uint32_t block : {7u, 64u, 512u, 4096u}) {
+                auto r = stress(p, bpm, sr, block, 2.0);
+                bool valid; const int sounding = checkNoteBalance(r.events, valid);
+                if (!valid || sounding != 0 || !r.framesOk)
+                    std::printf("    bpm=%g sr=%g block=%u valid=%d sounding=%d framesOk=%d\n", bpm, sr, block, valid, sounding, r.framesOk);
+                CHECK(valid); CHECK_EQ(sounding, 0); CHECK(r.framesOk);
+                CHECK(r.events.size() < 5000000u);
+                // CPU share at host-realistic block sizes; single-block maxima are dominated by OS scheduling jitter.
+                if (block >= 64) worstRatio = std::max(worstRatio, r.avgBlockUs / (1e6 * block / sr));
+                if (bpm == 999.0 && sr == 44100.0 && block == 512)
+                    std::printf("    999 bpm worst case: %zu events in 2 s, avg %.1f us/block (budget %.0f us), max %.1f us, dropped note-ons %u\n",
+                                r.events.size(), r.avgBlockUs, 1e6 * block / sr, r.maxBlockUs, r.dropped);
+            }
+    std::printf("    worst average CPU share of the audio budget over all configs (blocks >= 64): %.4f\n", worstRatio);
+    CHECK(worstRatio < 0.25);
+}
+
+TEST(stress_dense_events_are_identical_across_block_sizes_when_nothing_is_dropped)
+{
+    Pattern p = worstCasePattern();
+    for (int t = 0; t < 16; ++t) for (int i = 0; i < 64; ++i) p.tracks[t].steps[i].ratchets = 2;   // dense, below the overflow limits
+    std::vector<AbsEvent> ref; bool haveRef = false;
+    for (uint32_t block : {64u, 100u, 512u, 1000u}) {
+        auto r = stress(p, 140.0, 48000.0, block, 3.0);
+        CHECK_EQ(r.dropped, 0u);
+        if (!haveRef) { ref = r.events; haveRef = true; } else CHECK(r.events == ref);
+    }
+}
+
+TEST(overflow_under_extreme_load_is_counted_never_corrupting)
+{
+    Pattern p = worstCasePattern();
+    for (int t = 0; t < 16; ++t) p.tracks[t].resolution = Resolution::SixtyFourth;   // 16 tracks x 16 steps/quarter x 8 ratchets
+    auto r = stress(p, 999.0, 44100.0, 4096, 1.0);          // ~3000 candidates per block: more than the engine can hold
+    CHECK(r.dropped > 0);
+    bool valid; CHECK_EQ(checkNoteBalance(r.events, valid), 0); CHECK(valid);
+}
+
+TEST(invalid_transport_input_is_harmless_and_recovers)
+{
+    const Pattern p = allStepsPattern(36, Resolution::Sixteenth);
+    Sequencer seq;
+    const double nan = std::numeric_limits<double>::quiet_NaN(), inf = std::numeric_limits<double>::infinity();
+    const TransportInfo bad[] = {
+        {true, nan, 120, 48000}, {true, 0, nan, 48000}, {true, 0, inf, 48000}, {true, 0, -5, 48000}, {true, 0, 0, 48000},
+        {true, 0, 120, nan}, {true, 0, 120, 0}, {true, 0, 120, -48000}, {true, 0, 120, 1e12}, {true, -1.0, 120, 48000},
+        {true, 1e12, 120, 48000}, {true, inf, 120, 48000}, {true, 0, 1e9, 48000}, {true, 0, 120, 100},
+    };
+    for (const TransportInfo& tp : bad) {
+        seq.process(p, tp, 512);
+        CHECK_EQ(seq.eventCount(), 0);
+        CHECK_EQ(seq.soundingNotes(), 0);
+    }
+    seq.process(p, TransportInfo{true, 0, 120, 48000}, 0); CHECK_EQ(seq.eventCount(), 0);                  // zero frames
+    seq.process(p, TransportInfo{true, 0, 120, 48000}, 1u << 20);                                          // far larger than any host block
+    CHECK(seq.eventCount() > 0); CHECK(seq.eventCount() <= Sequencer::kMaxEvents);
+    for (uint32_t i = 0; i < seq.eventCount(); ++i) CHECK(seq.events()[i].frame < (1u << 20));
+    seq.process(p, TransportInfo{false, 0, 120, 48000}, 64);
+    CHECK_EQ(seq.soundingNotes(), 0);
+    seq.process(p, TransportInfo{true, 0, 120, 48000}, 512);                                               // recovers
+    CHECK(seq.eventCount() > 0);
+}
+
+TEST(audio_path_performs_no_heap_allocation)
+{
+    // Everything is built first; only the per-block calls run inside the counted region.
+    Pattern bank[3] = {worstCasePattern(), allStepsPattern(36, Resolution::Sixteenth), allStepsPattern(38, Resolution::Eighth)};
+    bank[1].tracks[0].steps[3].probability = 50;
+    Sequencer seq; PatternSwitcher sw; sw.reset(0);
+    SnapshotExchange<EngineSnapshot> ex; SpscQueue<SwitchRequest, 16> q;
+    long events = 0;
+    g_allocs = 0; g_countAllocs = true;
+    for (int blk = 0; blk < 3000; ++blk) {
+        if (blk % 97 == 0) { ex.writeSlot().patterns[0].seed = (uint32_t)blk; ex.publish(); }
+        if (blk % 211 == 0) q.push(SwitchRequest{(uint8_t)(1 + blk % 2), blk % 2 ? SwitchQuantize::Bar : SwitchQuantize::Now});
+        SwitchRequest rq; bool fresh; (void)ex.acquire(fresh);
+        while (q.pop(rq)) sw.request(rq);
+        const bool playing = blk % 700 > 30;                       // includes stops
+        const double qpos = (blk % 1500) * 512 * 120.0 / (60.0 * 48000.0);   // includes a loop wrap
+        sw.plan(playing, qpos, 4.0);
+        seq.process(bank[sw.current()], TransportInfo{playing, qpos, 120.0, 48000.0}, 512,
+                    sw.pending() ? &bank[sw.pendingIndex()] : nullptr, sw.switchAt());
+        if (seq.switchCommitted()) sw.commit();
+        events += seq.eventCount();
+    }
+    seq.flush();
+    g_countAllocs = false;
+    std::printf("    audio-path run: %ld events\n", events);
+    CHECK(events > 200);
+    CHECK_EQ(g_allocs.load(), 0);
 }
 
 int main() { return testfw::runAll(); }
