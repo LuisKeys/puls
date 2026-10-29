@@ -12,6 +12,7 @@ START_NAMESPACE_DISTRHO
 static constexpr const char* kStateKey = "state";
 static constexpr const char* kCmdKey   = "cmd";
 static constexpr size_t kMaxOutbox = 512;
+static constexpr double kAuditionSeconds = 0.2;   // length of a preview note
 
 PulsPlugin::PulsPlugin()
     : Plugin(0, 0, 1), fBridge(fModel)
@@ -138,6 +139,8 @@ void PulsPlugin::setState(const char* key, const char* value)
             publish();
         if (r.switchRequested)
             fSwitchQueue.push(r.request);   // full queue (UI hammering): the newest request is dropped
+        for (const puls::AuditionNote& a : r.auditions)
+            fAuditionQueue.push(a);         // same policy
         for (const std::string& ev : r.events)
             pushEvent(ev);
     }
@@ -146,11 +149,13 @@ void PulsPlugin::setState(const char* key, const char* value)
 void PulsPlugin::activate()
 {
     fSeq.reset();
+    fAudition.reset();
 }
 
 void PulsPlugin::deactivate()
 {
     fSeq.reset();
+    fAudition.reset();
 }
 
 void PulsPlugin::run(const float**, float**, uint32_t frames)
@@ -200,9 +205,21 @@ void PulsPlugin::run(const float**, float**, uint32_t frames)
             fTraceDropped.fetch_add(1, std::memory_order_relaxed);
     }
 
-    for (uint32_t i = 0; i < fSeq.eventCount(); ++i)
+    // Edit previews sound whether or not the host plays (and even with the sequencer off: they answer an edit).
+    fAudition.begin();
+    puls::AuditionNote a;
+    const uint32_t auditionFrames = static_cast<uint32_t>(kAuditionSeconds * getSampleRate());
+    while (fAuditionQueue.pop(a))
+        fAudition.trigger(a, auditionFrames);
+    fAudition.advance(frames);
+
+    // Both lists are sorted by frame; merge them (previews first on equal frames).
+    const puls::MidiMsg* seq = fSeq.events();
+    const puls::MidiMsg* aud = fAudition.events();
+    const uint32_t ns = fSeq.eventCount(), na = fAudition.eventCount();
+    for (uint32_t i = 0, j = 0; i < ns || j < na;)
     {
-        const puls::MidiMsg& m = fSeq.events()[i];
+        const puls::MidiMsg& m = (j < na && (i >= ns || aud[j].frame <= seq[i].frame)) ? aud[j++] : seq[i++];
         MidiEvent ev{};
         ev.frame = m.frame;
         ev.size = 3;

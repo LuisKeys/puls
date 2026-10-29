@@ -1,5 +1,6 @@
 #include "Bridge.hpp"
 #include "Serialization.hpp"
+#include <algorithm>
 #include <cstdio>
 
 namespace puls {
@@ -119,7 +120,7 @@ Bridge::Result Bridge::handle(const char* text)
     Result r;
     const json cmd = json::parse(text, nullptr, false);
     std::string type = "?", err;
-    auto fail = [&]() { r.events.clear(); r.events.push_back(errorEvent(type, err)); r.changed = r.switchRequested = false; return r; };
+    auto fail = [&]() { r.events.clear(); r.events.push_back(errorEvent(type, err)); r.changed = r.switchRequested = false; r.auditions.clear(); return r; };
 
     if (cmd.is_discarded() || !cmd.is_object()) { err = "not a JSON object"; return fail(); }
     const auto vit = cmd.find("version");
@@ -325,6 +326,19 @@ Bridge::Result Bridge::handle(const char* text)
         r.events.push_back(dumpJson(historyEvent(model_)));
     }
     if (selectedChanged) r.events.push_back(dumpJson(patternEvent(model_)));
+    if (model_.settings.audition && (type == "toggleStep" || type == "modifyStep" || type == "editSteps")) {
+        // Step commands never reorder tracks, so `before` lines up with the selected pattern.
+        const Pattern& p = model_.pattern();
+        for (int i = 0; i < p.trackCount; ++i) {
+            const Track& tr = p.tracks[i];
+            for (int s = 0; s < kMaxSteps; ++s) {
+                if (!tr.steps[s].active || before.tracks[i].steps[s].active) continue;
+                const int vel = std::clamp((int(tr.steps[s].velocity) * tr.velocityPct) / 100, 1, 127);
+                r.auditions.push_back(AuditionNote{tr.channel, tr.note, static_cast<uint8_t>(vel)});
+                break;
+            }
+        }
+    }
     if (type == "duplicatePattern" || type == "pastePattern" || type == "renamePattern" || type == "clearPattern" ||
         type == "undo" || type == "redo" || type == "toggleStep" || type == "setStepVelocity" || type == "modifyStep" ||
         type == "editSteps") {

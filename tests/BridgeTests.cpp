@@ -564,4 +564,53 @@ TEST(fuzz_state_documents_are_rejected_or_valid)
     CHECK(rejected > 1000); CHECK(accepted >= 1);
 }
 
+TEST(switching_steps_on_auditions_each_track_once_and_can_be_turned_off)
+{
+    Model m = defaultModel();
+    Bridge b(m);
+    Track& t0 = m.pattern().tracks[0];
+    t0.steps[1] = Step{};
+    t0.steps[1].velocity = 100;
+    t0.velocityPct = 50;
+    const uint32_t id0 = t0.id, id1 = m.pattern().tracks[1].id;
+    auto toggle = [&](uint32_t id, int s) {
+        return b.handle(("{\"version\":1,\"type\":\"toggleStep\",\"track\":" + std::to_string(id) + ",\"step\":" + std::to_string(s) + "}").c_str());
+    };
+    Bridge::Result r = toggle(id0, 1);
+    CHECK_EQ(r.auditions.size(), 1u);
+    CHECK_EQ((int)r.auditions[0].note, (int)t0.note);
+    CHECK_EQ((int)r.auditions[0].channel, (int)t0.channel);
+    CHECK_EQ((int)r.auditions[0].velocity, 50);
+    CHECK(toggle(id0, 1).auditions.empty());     // switching a step off is silent
+
+    // A block switched on: one note per track.
+    r = b.handle(("{\"version\":1,\"type\":\"editSteps\",\"cells\":["
+                  "{\"track\":" + std::to_string(id0) + ",\"step\":61,\"props\":{\"active\":true}},"
+                  "{\"track\":" + std::to_string(id0) + ",\"step\":62,\"props\":{\"active\":true}},"
+                  "{\"track\":" + std::to_string(id1) + ",\"step\":62,\"props\":{\"active\":true}}]}").c_str());
+    CHECK(r.changed);
+    CHECK_EQ(r.auditions.size(), 2u);
+    // Other edits of an active step do not audition.
+    r = b.handle(("{\"version\":1,\"type\":\"modifyStep\",\"track\":" + std::to_string(id0) + ",\"step\":61,\"props\":{\"gate\":20}}").c_str());
+    CHECK(r.changed);
+    CHECK(r.auditions.empty());
+    // Failed commands never audition.
+    CHECK(toggle(id0, 99).auditions.empty());
+
+    r = b.handle("{\"version\":1,\"type\":\"setSettings\",\"settings\":{\"audition\":false}}");
+    CHECK(r.changed);
+    CHECK(!m.settings.audition);
+    CHECK(toggle(id0, 1).auditions.empty());
+    CHECK(b.handle("{\"version\":1,\"type\":\"setSettings\",\"settings\":{\"audition\":\"no\"}}").events.size() == 1);
+    CHECK(!m.settings.audition);
+
+    // Persisted with the project; older states without the key keep the default (on).
+    Model c; std::string err;
+    CHECK(loadState(saveState(m).c_str(), c, err));
+    CHECK(!c.settings.audition);
+    Model d;
+    CHECK(loadState("{\"schemaVersion\":2,\"patterns\":[{\"tracks\":[{\"id\":1}]}],\"settings\":{}}", d, err));
+    CHECK(d.settings.audition);
+}
+
 int main() { return testfw::runAll(); }
