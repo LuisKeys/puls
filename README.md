@@ -1,8 +1,11 @@
 # Puls
 
 A polyrhythmic **CLAP MIDI drum step sequencer** (note effect). It emits MIDI notes to the instrument that follows it
-(e.g. Bitwig's Drum Machine); it is not a synth or sampler. Built with [DPF](https://github.com/DISTRHO/DPF) and its
-built-in WebView; the UI is plain TypeScript + CSS.
+(e.g. Bitwig's Drum Machine); it is not a synth or sampler. Built with [DPF](https://github.com/DISTRHO/DPF); the editor is
+native (DGL/NanoVG over OpenGL).
+
+> The native editor is being brought to parity with the former WebView UI in milestones (DECISIONS.md, ADR-014).
+> Not yet back: the help overlay.
 
 ## Features
 - Up to 16 tracks x 64 steps per pattern, each track with its own length, resolution (1/4 to 1/64, triplets), phase, swing, note and channel, so tracks drift against each other (polyrhythm).
@@ -13,9 +16,9 @@ built-in WebView; the UI is plain TypeScript + CSS.
 - Project state (all 16 patterns) is saved with the host project.
 
 ## Build and install (macOS)
-Requires Xcode, CMake, Node 20. `git submodule update --init --recursive` first.
+Requires Xcode and CMake (Linux: a C++20 compiler, CMake, OpenGL and X11 dev packages). `git submodule update --init --recursive` first.
 
-    scripts/build.sh          # UI (Vite) + plugin -> bin/puls.clap
+    scripts/build.sh          # plugin -> bin/puls.clap
     scripts/install-mac.sh    # copies to ~/Library/Audio/Plug-Ins/CLAP
     scripts/validate.sh       # unit tests + headless CLAP host test (+ clap-validator if installed)
     scripts/sanitize.sh       # the same tests under ASan/UBSan and TSan
@@ -42,7 +45,7 @@ Keyboard shortcuts only work while the plugin window has keyboard focus (whether
 
 ## Architecture
 `engine/` (pure C++, no DPF: sequencer, scheduler, pattern switcher, lock-free handoff) <- `model/` (editable state, undo) <-
-`state/` (versioned JSON) <- `bridge/` (validated commands/events) <- `plugin/` (DPF glue) <-> `ui/` (WebView).
+`state/` (versioned JSON) <- `bridge/` (validated commands/events) <- `plugin/` (DPF glue) <-> `gui/` (layout + commands, DGL-free) and `plugin/PulsUI.cpp` (NanoVG drawing).
 The audio thread never allocates, locks or parses JSON; the UI never schedules notes and closing it does not interrupt playback.
 See `DECISIONS.md` for the design decisions (ADR-001...) and `docs/phase0-report.md` for per-phase results.
 

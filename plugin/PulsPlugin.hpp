@@ -32,6 +32,10 @@ public:
     // Main-thread outbox, drained by the UI in uiIdle.
     std::vector<std::string> drainOutbox();
 
+    // Main thread only (the CLAP UI runs there and sends commands through UI::setState, which is synchronous):
+    // the native UI reads the Model directly instead of mirroring it from events.
+    const puls::Model& model() const noexcept { return fModel; }
+
 protected:
     const char* getLabel() const override       { return "puls"; }
     const char* getDescription() const override { return "Polyrhythmic drum step sequencer"; }

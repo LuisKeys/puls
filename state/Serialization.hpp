@@ -13,6 +13,7 @@ nlohmann::json trackToJson(const Track& t, bool withSteps);
 nlohmann::json patternToJson(const Pattern& p);
 nlohmann::json settingsToJson(const Settings& s);
 nlohmann::json bankSummaryToJson(const Model& m);   // [{name, used}] for all slots, for the pattern bank UI
+const char* resolutionName(Resolution r);           // "1/16", "1/8T", ... (the wire/display name)
 
 // Validating readers. They apply only the keys that are present on top of `out`, and return false with a
 // message (leaving `out` unspecified) if any present key has the wrong type or is out of range.

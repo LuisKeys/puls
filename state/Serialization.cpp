@@ -134,8 +134,7 @@ json trackToJson(const Track& t, bool withSteps)
     j["note"] = t.note;
     j["channel"] = t.channel;
     j["length"] = t.length;
-    j["resolution"] = kResolutionNames[static_cast<int>(t.resolution) < static_cast<int>(Resolution::Count)
-                                       ? static_cast<int>(t.resolution) : 2];
+    j["resolution"] = resolutionName(t.resolution);
     j["phase"] = t.phase;
     j["velocityPct"] = t.velocityPct;
     j["probabilityPct"] = t.probabilityPct;
@@ -162,6 +161,12 @@ json patternToJson(const Pattern& p)
     for (int i = 0; i < p.trackCount && i < kMaxTracks; ++i) tracks.push_back(trackToJson(p.tracks[i], true));
     j["tracks"] = std::move(tracks);
     return j;
+}
+
+const char* resolutionName(Resolution r)
+{
+    const int i = static_cast<int>(r);
+    return kResolutionNames[i < static_cast<int>(Resolution::Count) ? i : 2];
 }
 
 json settingsToJson(const Settings& s)
