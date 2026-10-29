@@ -46,6 +46,14 @@ json stepEvent(const Track& t, int step)
     return e;
 }
 
+json historyEvent(const Model& m)
+{
+    json e = event("history");
+    e["canUndo"] = m.history.canUndo();
+    e["canRedo"] = m.history.canRedo();
+    return e;
+}
+
 json patternEvent(const Model& m)
 {
     json e = event("patternChanged");
@@ -70,6 +78,8 @@ std::string Bridge::initEvent() const
     json e = event("init");
     e["pattern"] = patternToJson(model_.pattern);
     e["settings"] = settingsToJson(model_.settings);
+    e["canUndo"] = model_.history.canUndo();
+    e["canRedo"] = model_.history.canRedo();
     return dumpJson(e);
 }
 
@@ -89,6 +99,8 @@ Bridge::Result Bridge::handle(const char* text)
 
     Track* t = nullptr;
     int step = 0;
+    const Pattern before = model_.pattern;   // history entry if the command turns out to edit the pattern
+    uint64_t coalesce = 0;
 
     if (type == "hello") {
         r.events.push_back(initEvent());
@@ -101,6 +113,12 @@ Bridge::Result Bridge::handle(const char* text)
         if (!readTrackRef(cmd, model_, t, err) || !readStepRef(cmd, step, err)) return fail();
         json props = json::object();
         if (cmd.contains("velocity")) props["velocity"] = cmd["velocity"]; else { err = "velocity: required"; return fail(); }
+        const auto git = cmd.find("gesture");
+        if (git != cmd.end()) {
+            if (!git->is_number_unsigned() || git->get<uint64_t>() > 0xFFFFFFFFull) { err = "gesture: expected a non-negative integer"; return fail(); }
+            if (git->get<uint64_t>() != 0)
+                coalesce = (1ull << 63) | (git->get<uint64_t>() << 16) | (static_cast<uint64_t>(t->id & 0xFF) << 8) | static_cast<uint64_t>(step);
+        }
         Step s = t->steps[step];
         if (!readStep(props, s, err)) return fail();
         t->steps[step] = s;
@@ -158,9 +176,23 @@ Bridge::Result Bridge::handle(const char* text)
         e["settings"] = settingsToJson(s);
         r.events.push_back(dumpJson(e));
         r.changed = true;
+    } else if (type == "undo" || type == "redo") {
+        if (!(type == "undo" ? model_.history.undo(model_.pattern) : model_.history.redo(model_.pattern))) {
+            err = type == "undo" ? "nothing to undo" : "nothing to redo";
+            return fail();
+        }
+        r.events.push_back(dumpJson(patternEvent(model_)));
+        r.events.push_back(dumpJson(historyEvent(model_)));
+        r.changed = true;
+        return r;
     } else {
         err = "unknown command";
         return fail();
+    }
+
+    if (r.changed && type != "setSettings") {
+        model_.history.record(before, coalesce);
+        r.events.push_back(dumpJson(historyEvent(model_)));
     }
     return r;
 }

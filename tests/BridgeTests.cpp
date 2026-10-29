@@ -9,7 +9,7 @@
 using namespace puls;
 using json = nlohmann::json;
 
-static json one(const Bridge::Result& r) { return r.events.size() == 1 ? json::parse(r.events[0]) : json(); }
+static json one(const Bridge::Result& r) { return r.events.empty() ? json() : json::parse(r.events[0]); }
 static std::string typeOf(const Bridge::Result& r) { const json j = one(r); return j.is_object() ? j.value("type", "") : "none"; }
 
 TEST(state_round_trip_is_stable)
@@ -186,6 +186,72 @@ TEST(snapshot_exchange_hands_over_latest_without_tearing)
     }
     producer.join();
     CHECK(!torn); CHECK_EQ(last, 200000);
+}
+
+static Bridge::Result cmd(Bridge& b, const std::string& s) { return b.handle(s.c_str()); }
+
+TEST(undo_redo_restores_pattern_states)
+{
+    Model m = makeDefaultModel(); Bridge b(m);
+    const std::string original = saveState(m);
+    CHECK(typeOf(cmd(b, "{\"version\":1,\"type\":\"undo\"}")) == "error"); // empty history
+    cmd(b, "{\"version\":1,\"type\":\"toggleStep\",\"track\":1,\"step\":1}");
+    cmd(b, "{\"version\":1,\"type\":\"modifyTrack\",\"track\":2,\"props\":{\"length\":9}}");
+    cmd(b, "{\"version\":1,\"type\":\"removeTrack\",\"track\":3}");
+    const std::string edited = saveState(m);
+    CHECK(m.history.canUndo()); CHECK(!m.history.canRedo());
+
+    auto r = cmd(b, "{\"version\":1,\"type\":\"undo\"}");
+    CHECK(r.changed); CHECK_EQ(r.events.size(), 2); CHECK(json::parse(r.events[0])["type"] == "patternChanged");
+    CHECK(json::parse(r.events[1])["canRedo"] == true);
+    CHECK_EQ(m.pattern.trackCount, 8); CHECK_EQ(m.pattern.tracks[2].id, 3);  // removed track is back
+    cmd(b, "{\"version\":1,\"type\":\"undo\"}");
+    cmd(b, "{\"version\":1,\"type\":\"undo\"}");
+    CHECK(saveState(m) == original);
+    CHECK(!m.history.canUndo());
+    cmd(b, "{\"version\":1,\"type\":\"redo\"}"); cmd(b, "{\"version\":1,\"type\":\"redo\"}"); cmd(b, "{\"version\":1,\"type\":\"redo\"}");
+    CHECK(saveState(m) == edited);
+    CHECK(typeOf(cmd(b, "{\"version\":1,\"type\":\"redo\"}")) == "error");
+
+    // a new edit after undo discards the redo branch
+    cmd(b, "{\"version\":1,\"type\":\"undo\"}");
+    CHECK(m.history.canRedo());
+    cmd(b, "{\"version\":1,\"type\":\"toggleStep\",\"track\":1,\"step\":5}");
+    CHECK(!m.history.canRedo());
+}
+
+TEST(velocity_drag_gesture_is_one_undo_step)
+{
+    Model m = makeDefaultModel(); Bridge b(m);
+    cmd(b, "{\"version\":1,\"type\":\"toggleStep\",\"track\":1,\"step\":0}"); // kick step 0 is active -> now off
+    cmd(b, "{\"version\":1,\"type\":\"toggleStep\",\"track\":1,\"step\":0}"); // on again, velocity 100
+    for (int v = 101; v <= 120; ++v)
+        cmd(b, "{\"version\":1,\"type\":\"setStepVelocity\",\"track\":1,\"step\":0,\"velocity\":" + std::to_string(v) + ",\"gesture\":7}");
+    CHECK_EQ(m.pattern.tracks[0].steps[0].velocity, 120);
+    cmd(b, "{\"version\":1,\"type\":\"undo\"}");
+    CHECK_EQ(m.pattern.tracks[0].steps[0].velocity, 100);          // whole drag reverted at once
+    CHECK(m.pattern.tracks[0].steps[0].active);
+    // a second drag with a different gesture id is its own step
+    cmd(b, "{\"version\":1,\"type\":\"setStepVelocity\",\"track\":1,\"step\":0,\"velocity\":50,\"gesture\":8}");
+    cmd(b, "{\"version\":1,\"type\":\"setStepVelocity\",\"track\":1,\"step\":0,\"velocity\":60,\"gesture\":9}");
+    cmd(b, "{\"version\":1,\"type\":\"undo\"}");
+    CHECK_EQ(m.pattern.tracks[0].steps[0].velocity, 50);
+    CHECK(typeOf(cmd(b, "{\"version\":1,\"type\":\"setStepVelocity\",\"track\":1,\"step\":0,\"velocity\":5,\"gesture\":-1}")) == "error");
+}
+
+TEST(settings_and_failed_commands_do_not_touch_history)
+{
+    Model m = makeDefaultModel(); Bridge b(m);
+    cmd(b, "{\"version\":1,\"type\":\"setSettings\",\"settings\":{\"enabled\":false}}");
+    cmd(b, "{\"version\":1,\"type\":\"toggleStep\",\"track\":99,\"step\":0}");
+    CHECK(!m.history.canUndo());
+    cmd(b, "{\"version\":1,\"type\":\"toggleStep\",\"track\":1,\"step\":1}");
+    cmd(b, "{\"version\":1,\"type\":\"undo\"}");
+    CHECK(!m.settings.enabled);                                      // undo leaves settings alone
+    std::string err;
+    CHECK(loadState(saveState(m).c_str(), m, err));                  // a restored project starts with no history
+    CHECK(!m.history.canUndo() && !m.history.canRedo());
+    CHECK(json::parse(b.initEvent())["canUndo"] == false);
 }
 
 int main() { return testfw::runAll(); }

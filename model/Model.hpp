@@ -1,6 +1,7 @@
 #pragma once
 #include "DefaultPattern.hpp"
 #include "Snapshot.hpp"
+#include "UndoStack.hpp"
 
 namespace puls {
 
@@ -9,6 +10,7 @@ struct Model {
     Pattern  pattern;
     Settings settings;
     uint32_t nextTrackId = 1;
+    UndoStack history;   // not persisted; a restored project starts with empty history
 
     Track* findTrack(uint32_t id) noexcept
     {

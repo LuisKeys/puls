@@ -5,6 +5,7 @@ export type Change =
   | { kind: 'track'; id: number }
   | { kind: 'step'; id: number; step: number }
   | { kind: 'settings' }
+  | { kind: 'history' }
   | { kind: 'selection' }
   | { kind: 'transport' }
   | { kind: 'playheads' }
@@ -29,6 +30,8 @@ export const state = {
   settings: { anchorMode: 'restart', enabled: true } as Settings,
   selected: 0, // track id
   loaded: false,
+  canUndo: false,
+  canRedo: false,
   playing: false,
   bpm: 0,
   quarter: 0,
@@ -59,6 +62,8 @@ export function applyEvent(ev: NativeEvent): void {
       state.pattern = normalizePattern(ev.pattern);
       state.settings = ev.settings;
       state.loaded = true;
+      state.canUndo = ev.canUndo;
+      state.canRedo = ev.canRedo;
       keepSelection();
       emit({ kind: 'rebuild' });
       emit({ kind: 'settings' });
@@ -85,6 +90,11 @@ export function applyEvent(ev: NativeEvent): void {
     case 'settings':
       state.settings = ev.settings;
       emit({ kind: 'settings' });
+      break;
+    case 'history':
+      state.canUndo = ev.canUndo;
+      state.canRedo = ev.canRedo;
+      emit({ kind: 'history' });
       break;
     case 'transport':
       state.playing = ev.playing;
