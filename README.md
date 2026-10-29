@@ -4,9 +4,6 @@ A polyrhythmic **CLAP MIDI drum step sequencer** (note effect). It emits MIDI no
 (e.g. Bitwig's Drum Machine); it is not a synth or sampler. Built with [DPF](https://github.com/DISTRHO/DPF); the editor is
 native (DGL/NanoVG over OpenGL).
 
-> The native editor is being brought to parity with the former WebView UI in milestones (DECISIONS.md, ADR-014).
-> Not yet back: the help overlay.
-
 ## Features
 - Up to 16 tracks x 64 steps per pattern, each track with its own length, resolution (1/4 to 1/64, triplets), phase, swing, note and channel, so tracks drift against each other (polyrhythm).
 - Per step: velocity, probability, ratchets (1-8), micro-timing (+-50 %), gate.
@@ -36,10 +33,13 @@ Put Puls on a track *before* an instrument (note FX in Bitwig).
 | Step menu (probability, ratchets, micro-timing, gate) | Right-click / Ctrl+click a step |
 | Track menu (name, note, channel, resolution, length, phase, swing, ...) | Right-click a track label |
 | Mute / Solo | M / S buttons on the label |
+| Track length | Drag the length box up/down or scroll over it; click it to type |
 | Switch pattern | Click a slot (quantized); Alt+click = now; right-click for rename/copy/paste/duplicate/clear |
 | Select / move | Shift+click, arrow keys, Shift+arrows |
 | Toggle / clear / copy / cut / paste | Space or Enter / Delete / Ctrl-Cmd+C / X / V |
 | Undo / redo | Toolbar, or Ctrl-Cmd+Z / Shift+Ctrl-Cmd+Z |
+| Menu controls | Drag or scroll sliders; click a number or name to type (Enter confirms, Esc cancels) |
+| Help | Toolbar ? button or the ? key |
 
 Keyboard shortcuts only work while the plugin window has keyboard focus (whether a host forwards keys to it varies).
 
@@ -52,9 +52,9 @@ See `DECISIONS.md` for the design decisions (ADR-001...) and `docs/phase0-report
 ## Verified platforms
 | Platform | Built | Automated tests | Run in a host |
 |---|---|---|---|
-| macOS arm64 | yes | engine, bridge/state, headless CLAP host; ASan/UBSan/TSan clean | Bitwig Studio: used by the author through Phase 4; per-feature checklists not recorded |
+| macOS arm64 | WebView UI: yes. Native UI: not yet | engine, bridge/state, headless CLAP host; ASan/UBSan/TSan clean (WebView era) | Bitwig Studio with the WebView UI, through Phase 4; the native UI has not been built or run on macOS |
 | macOS x86_64 / universal | no | no | no |
-| Linux | no | no | no |
+| Linux x86_64 | yes (native UI) | engine, bridge/state, gui, headless CLAP host; ASan/UBSan/TSan clean | DPF JACK standalone (dummy driver) only; not yet in a DAW |
 | Windows | no | no | no |
 
 `clap-validator` has not been run (see `docs/phase0-report.md`). Only Bitwig has been tried; other CLAP hosts are untested.

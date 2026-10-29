@@ -2,6 +2,7 @@
 #include "PulsPlugin.hpp"
 #include "Commands.hpp"
 #include "EditorLayout.hpp"
+#include "Help.hpp"
 #include "MenuView.hpp"
 #include "Paint.hpp"
 #include "Selection.hpp"
@@ -153,6 +154,7 @@ protected:
         drawStatus();
         drawPopup();
         fMenu.draw(*this, model());
+        drawHelp();
     }
 
     // ---------------------------------------------------------------------------------------------------------
@@ -179,6 +181,14 @@ protected:
         }
         if (fDrag != Drag::None || fMenu.dragging())
             return true;
+        if (fHelpOpen)
+        {
+            // The help is modal: a click outside the panel or on × closes it, anything else is ignored.
+            if (fHelp.hitTest(x, y) != puls::gui::HelpHit::Panel)
+                fHelpOpen = false;
+            repaint();
+            return true;
+        }
 
         // Right-click, or Ctrl+click (the macOS context click), opens a menu for what is under the pointer.
         const bool context = ev.button == kMouseButtonRight || (ev.button == kMouseButtonLeft && (ev.mod & kModifierControl));
@@ -225,6 +235,16 @@ protected:
         relayout();
         const float x = ev.pos.getX() / fScale, y = ev.pos.getY() / fScale;
 
+        if (fHelpOpen)
+        {
+            const bool hot = fHelp.hitTest(x, y) == puls::gui::HelpHit::Close;
+            if (hot != fHelpCloseHot)
+            {
+                fHelpCloseHot = hot;
+                repaint();
+            }
+            return true;
+        }
         if (fMenu.dragging())
         {
             fMenu.motion(x, y);
@@ -267,6 +287,12 @@ protected:
             return false;
         relayout();
         const float x = ev.pos.getX() / fScale, y = ev.pos.getY() / fScale;
+        if (fHelpOpen)
+        {
+            fHelp.scrollBy(-static_cast<float>(ev.delta.getY()) * kScrollPxPerLine);
+            repaint();
+            return true;
+        }
         if (fMenu.isOpen() && fMenu.scroll(x, y, static_cast<float>(ev.delta.getY()), model()))
         {
             repaint();
@@ -299,6 +325,17 @@ protected:
     {
         if (!ev.press || fPlugin == nullptr)
             return false;
+        if (fHelpOpen)
+        {
+            if (ev.key == kKeyEscape)
+                fHelpOpen = false;
+            else if (ev.key == kKeyUp || ev.key == kKeyDown)
+                fHelp.scrollBy(ev.key == kKeyDown ? kScrollPxPerLine : -kScrollPxPerLine);
+            else if (ev.key == kKeyPageUp || ev.key == kKeyPageDown)
+                fHelp.scrollBy((ev.key == kKeyPageDown ? 1.0f : -1.0f) * fHelp.body.h);
+            repaint();
+            return true;   // grid and global shortcuts are off while the help is open
+        }
         if (fLenEditTrack != 0)
         {
             if (ev.key == kKeyEnter || ev.key == kKeyPadEnter)
@@ -348,6 +385,8 @@ protected:
             return false;
         if (fLenEditTrack != 0)
             fLenEdit.insert(ev.string);
+        else if (!fMenu.editing() && std::strcmp(ev.string, "?") == 0)
+            toggleHelp();
         else if (!fMenu.character(ev.string))
             return false;
         repaint();
@@ -566,6 +605,22 @@ private:
     void relayout()
     {
         fL.update(getWidth() / fScale, getHeight() / fScale, pattern().trackCount, puls::kMaxSteps, fConfirmTrack != 0);
+        fHelp.update(fL.width, fL.height);
+    }
+
+    void toggleHelp()
+    {
+        fHelpOpen = !fHelpOpen;
+        if (!fHelpOpen)
+            return;
+        // The help is modal: finish whatever was being edited first.
+        if (fLenEditTrack != 0)
+            commitLengthEdit();
+        fMenu.close(model());
+        fPopup = Popup::None;
+        fHover = {};
+        fHelpCloseHot = false;
+        setCursor(kMouseCursorArrow);
     }
 
     // ---------------------------------------------------------------------------------------------------------
@@ -626,6 +681,9 @@ private:
             break;
         case Item::Settings:
             fPopup = Popup::Settings;
+            break;
+        case Item::Help:
+            toggleHelp();
             break;
         case Item::Swing:
             if (const puls::Track* t = selectedTrack())
@@ -879,6 +937,7 @@ private:
         button(fL.removeTrack, "\xE2\x88\x92", p.trackCount > 1, false, hovered(Item::RemoveTrack), 14.0f);   // −
         button(fL.addTrack, "+", p.trackCount < puls::kMaxTracks, false, hovered(Item::AddTrack), 14.0f);
         button(fL.settings, "\xE2\x9A\x99", true, fPopup == Popup::Settings, hovered(Item::Settings), 14.0f);   // ⚙
+        button(fL.help, "?", true, fHelpOpen, hovered(Item::Help), 13.0f);
     }
 
     void drawBank()
@@ -1024,6 +1083,56 @@ private:
         button(fL.confirmNo, "Cancel", true, false, hovered(Item::ConfirmNo));
     }
 
+    // Modal help: dimmed window, a panel with a header and a scrolling two-column body (key, wrapped text).
+    void drawHelp()
+    {
+        if (!fHelpOpen)
+            return;
+        using puls::gui::HelpLayout;
+        fillRect({0, 0, fL.width, fL.height}, 0x000000, 0.6f);
+        panel(fHelp.panel);
+        label({fHelp.header.x + HelpLayout::kPad, fHelp.header.y, 200, fHelp.header.h}, "Puls help", col::white, ALIGN_LEFT, 14.0f);
+        button(fHelp.close, "\xC3\x97", true, false, fHelpCloseHot, 15.0f);   // ×
+
+        const Rect& body = fHelp.body;
+        const float valX = body.x + HelpLayout::kKeyW + 12, valW = body.right() - valX;
+        float y = body.y - fHelp.scroll;
+        save();
+        scissor(body.x, body.y, body.w, body.h);
+        fontSize(12.0f);
+        textLineHeight(1.2f);
+        for (int i = 0; i < puls::gui::kHelpSectionCount; ++i)
+        {
+            const puls::gui::HelpSection& sec = puls::gui::kHelpSections[i];
+            y += 10;
+            label({body.x, y, body.w, 18}, sec.title, col::accent);
+            y += 20;
+            textAlign(ALIGN_LEFT | ALIGN_TOP);
+            for (int r = 0; r < sec.count; ++r)
+            {
+                float kb[4], vb[4];
+                textBoxBounds(body.x, y + 5, HelpLayout::kKeyW, sec.rows[r].key, nullptr, kb);
+                textBoxBounds(valX, y + 5, valW, sec.rows[r].text, nullptr, vb);
+                const float h = std::max({kb[3] - kb[1], vb[3] - vb[1], 15.0f}) + 10;
+                if (y + h >= body.y && y <= body.bottom())   // only rows in view are drawn
+                {
+                    fillRect({body.x, y, body.w, 1}, col::line);
+                    fillColor(rgb(col::white));
+                    textBox(body.x, y + 5, HelpLayout::kKeyW, sec.rows[r].key);
+                    fillColor(rgb(col::text));
+                    textBox(valX, y + 5, valW, sec.rows[r].text);
+                }
+                y += h;
+            }
+        }
+        restore();
+        fHelp.setContentHeight(y + fHelp.scroll - body.y + 8);
+
+        if (fHelp.scroll < 1.0f && y > body.bottom())   // hint that there is more below
+            label({fHelp.header.x, fHelp.header.y, fHelp.close.x - 10 - fHelp.header.x, fHelp.header.h},
+                  "scroll for more \xE2\x86\x93", col::text2, ALIGN_RIGHT, 11.0f);   // ↓
+    }
+
     void drawStatus()
     {
         if (fStatus.empty())
@@ -1130,6 +1239,10 @@ private:
     int8_t fHeads[puls::kMaxTracks] = {};
 
     // Step selection (track index x step) and the block clipboard (UI-side, full step data, not persisted).
+    // Help overlay (modal).
+    puls::gui::HelpLayout fHelp;
+    bool fHelpOpen = false, fHelpCloseHot = false;
+
     puls::gui::Selection fSel;
     int                  fSelPattern = -1;
     puls::gui::StepBlock fClip;

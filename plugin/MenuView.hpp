@@ -20,6 +20,7 @@ public:
 
     bool isOpen() const noexcept { return menu_.isOpen(); }
     bool dragging() const noexcept { return dragField_ >= 0; }
+    bool editing() const noexcept { return editField_ >= 0; }
     bool contains(float x, float y) const noexcept { return isOpen() && menu_.panel.contains(x, y); }
     puls::gui::MenuPart hoveredPart() const noexcept { return hover_.part; }
 
