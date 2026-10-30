@@ -2,7 +2,7 @@
 NAME = puls
 
 FILES_DSP = PulsPlugin.cpp ../engine/Sequencer.cpp ../state/Serialization.cpp ../state/Templates.cpp ../bridge/Bridge.cpp
-FILES_UI  = PulsUI.cpp MenuView.cpp ../gui/EditorLayout.cpp ../gui/Commands.cpp ../gui/Menu.cpp ../gui/Selection.cpp ../gui/Help.cpp ../gui/Keyboard.cpp ../gui/TemplateList.cpp
+FILES_UI  = PulsUI.cpp MenuView.cpp WindowIcon.cpp ../gui/EditorLayout.cpp ../gui/Commands.cpp ../gui/Menu.cpp ../gui/Selection.cpp ../gui/Help.cpp ../gui/Keyboard.cpp ../gui/TemplateList.cpp
 
 DPF_PATH = ../external/dpf
 DPF_TARGET_DIR = ../bin

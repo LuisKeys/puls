@@ -49,7 +49,7 @@ public:
 protected:
     const char* getLabel() const override       { return "puls"; }
     const char* getDescription() const override { return "Polyrhythmic drum step sequencer"; }
-    const char* getMaker() const override       { return "AccelOne"; }
+    const char* getMaker() const override       { return "VoiSpeak"; }
     const char* getHomePage() const override    { return "https://accelone.com"; }
     const char* getLicense() const override     { return "Proprietary"; }
     uint32_t    getVersion() const override     { return d_version(0, 0, 1); }
