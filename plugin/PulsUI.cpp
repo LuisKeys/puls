@@ -10,6 +10,7 @@
 #include "TemplateList.hpp"
 #include "Serialization.hpp"
 #include "TextEdit.hpp"
+#include "WindowIcon.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -88,6 +89,10 @@ protected:
         if (fPlugin == nullptr)
             return;
         bool dirty = false;
+
+        // The host reparents our window after construction, so keep trying until it has a parent to put the icon on.
+        if (!fIconSet && fIconTries++ < 100)
+            fIconSet = puls::setWindowIcon(getWindow().getNativeWindowHandle());
 
         fPlugin->drainTrace();
 
@@ -1825,6 +1830,8 @@ private:
     // ---------------------------------------------------------------------------------------------------------
 
     PulsPlugin* fPlugin = nullptr;
+    bool fIconSet = false;
+    int fIconTries = 0;
     FontId fFont = -1;
     float  fScale = 1.0f;
     EditorLayout fL;

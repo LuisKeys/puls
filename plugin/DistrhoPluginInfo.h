@@ -1,7 +1,7 @@
 #ifndef DISTRHO_PLUGIN_INFO_H_INCLUDED
 #define DISTRHO_PLUGIN_INFO_H_INCLUDED
 
-#define DISTRHO_PLUGIN_BRAND   "AccelOne"
+#define DISTRHO_PLUGIN_BRAND   "VoiSpeak"
 #define DISTRHO_PLUGIN_NAME    "Puls"
 #define DISTRHO_PLUGIN_URI     "https://accelone.com/plugins/puls"
 #define DISTRHO_PLUGIN_CLAP_ID "com.accelone.puls"
