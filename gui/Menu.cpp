@@ -7,60 +7,59 @@
 
 namespace puls::gui {
 
-const uint32_t kPalette[kPaletteSize] = {
-    0xFF6256, 0xFFAB50, 0xE3D65C, 0x79D86A, 0x48D9B1, 0x50BAF1, 0x9C8CF5, 0xE77FCE,   // the default track colors
-    0xFF8A80, 0xFFD180, 0xC6E377, 0x3FBF7F, 0x26C6DA, 0x7986CB, 0xB39DDB, 0xA4A8B1,
-};
-
 namespace {
 
 constexpr int kResolutions = static_cast<int>(Resolution::Count);
 
+// A field of the generic popover keyed by a FieldKey. The MIDI note field gets the keyboard button.
+constexpr FieldDef F(FieldKey k, FieldType type, const char* label, int min = 0, int max = 0, int column = 0)
+{
+    return FieldDef{static_cast<int>(k), type, label, min, max, column, k == FieldKey::TrackNote};
+}
+
 const FieldDef kStepFields[] = {
-    {FieldKey::StepActive, FieldType::Check, "Active"},
-    {FieldKey::StepVelocity, FieldType::Range, "Velocity", 1, 127},
-    {FieldKey::StepProbability, FieldType::Range, "Probability %", 0, 100},
-    {FieldKey::StepRatchets, FieldType::Range, "Ratchets", 1, 8},
-    {FieldKey::StepMicro, FieldType::Range, "Micro-timing %", -50, 50},
-    {FieldKey::StepGate, FieldType::Range, "Gate %", 1, 100},
-    {FieldKey::StepClear, FieldType::Action, "Clear step"},
+    F(FieldKey::StepActive, FieldType::Check, "Active"),
+    F(FieldKey::StepVelocity, FieldType::Range, "Velocity", 1, 127),
+    F(FieldKey::StepProbability, FieldType::Range, "Probability %", 0, 100),
+    F(FieldKey::StepRatchets, FieldType::Range, "Ratchets", 1, 8),
+    F(FieldKey::StepMicro, FieldType::Range, "Micro-timing %", -50, 50),
+    F(FieldKey::StepGate, FieldType::Range, "Gate %", 1, 100),
+    F(FieldKey::StepClear, FieldType::Action, "Clear step"),
 };
 
 const FieldDef kTrackFields[] = {
-    {FieldKey::TrackName, FieldType::Text, "Name"},
-    {FieldKey::TrackColor, FieldType::Color, "Color"},
-    {FieldKey::TrackNote, FieldType::Range, "MIDI note", 0, 127},
-    {FieldKey::TrackChannel, FieldType::Range, "Channel", 1, 16},
-    {FieldKey::TrackResolution, FieldType::Select, "Resolution", 0, kResolutions - 1},
-    {FieldKey::TrackLength, FieldType::Range, "Length", 1, kMaxSteps},
-    {FieldKey::TrackPhase, FieldType::Range, "Phase", 0, kMaxSteps - 1, 1},
-    {FieldKey::TrackVelocityPct, FieldType::Range, "Velocity %", 0, 200, 1},
-    {FieldKey::TrackProbabilityPct, FieldType::Range, "Probability %", 0, 100, 1},
-    {FieldKey::TrackSwing, FieldType::Range, "Swing %", 0, 75, 1},
-    {FieldKey::TrackDurationPct, FieldType::Range, "Duration %", 1, 100, 1},
-    {FieldKey::TrackMute, FieldType::Check, "Mute", 0, 1, 1},
-    {FieldKey::TrackSolo, FieldType::Check, "Solo", 0, 1, 1},
+    F(FieldKey::TrackName, FieldType::Text, "Name"),
+    F(FieldKey::TrackColor, FieldType::Color, "Color"),
+    F(FieldKey::TrackNote, FieldType::Range, "MIDI note", 0, 127),
+    F(FieldKey::TrackChannel, FieldType::Range, "Channel", 1, 16),
+    F(FieldKey::TrackResolution, FieldType::Select, "Resolution", 0, kResolutions - 1),
+    F(FieldKey::TrackLength, FieldType::Range, "Length", 1, kMaxSteps),
+    F(FieldKey::TrackPhase, FieldType::Range, "Phase", 0, kMaxSteps - 1, 1),
+    F(FieldKey::TrackVelocityPct, FieldType::Range, "Velocity %", 0, 200, 1),
+    F(FieldKey::TrackProbabilityPct, FieldType::Range, "Probability %", 0, 100, 1),
+    F(FieldKey::TrackSwing, FieldType::Range, "Swing %", 0, 75, 1),
+    F(FieldKey::TrackDurationPct, FieldType::Range, "Duration %", 1, 100, 1),
+    F(FieldKey::TrackMute, FieldType::Check, "Mute", 0, 1, 1),
+    F(FieldKey::TrackSolo, FieldType::Check, "Solo", 0, 1, 1),
 };
 
 const FieldDef kPatternFields[] = {
-    {FieldKey::PatternName, FieldType::Text, "Name"},
-    {FieldKey::PatternPlayNow, FieldType::Action, "Play now"},
-    {FieldKey::PatternCopy, FieldType::Action, "Copy"},
-    {FieldKey::PatternPaste, FieldType::Action, "Paste (replaces this pattern)"},
-    {FieldKey::PatternDuplicate, FieldType::Action, "Duplicate to next free slot"},
-    {FieldKey::PatternClear, FieldType::Action, "Clear steps"},
+    F(FieldKey::PatternName, FieldType::Text, "Name"),
+    F(FieldKey::PatternPlayNow, FieldType::Action, "Play now"),
+    F(FieldKey::PatternCopy, FieldType::Action, "Copy"),
+    F(FieldKey::PatternPaste, FieldType::Action, "Paste (replaces this pattern)"),
+    F(FieldKey::PatternDuplicate, FieldType::Action, "Duplicate to next free slot"),
+    F(FieldKey::PatternClear, FieldType::Action, "Clear steps"),
 };
 
 template <size_t N> constexpr int countOf(const FieldDef (&)[N]) { return static_cast<int>(N); }
-
-float rowHeight(FieldType t) { return t == FieldType::Color ? Menu::kColorRowH : t == FieldType::Action ? Menu::kActionRowH : Menu::kRowH; }
 
 const FieldDef* findDef(MenuKind kind, FieldKey k)
 {
     const FieldDef* defs = kind == MenuKind::Step ? kStepFields : kind == MenuKind::Track ? kTrackFields : kPatternFields;
     const int n = kind == MenuKind::Step ? countOf(kStepFields) : kind == MenuKind::Track ? countOf(kTrackFields) : countOf(kPatternFields);
     for (int i = 0; i < n; ++i)
-        if (defs[i].key == k) return &defs[i];
+        if (keyOf(defs[i]) == k) return &defs[i];
     return nullptr;
 }
 
@@ -88,93 +87,11 @@ void Menu::open(const MenuTarget& t, float x, float y, float winW, float winH)
 {
     target = t;
     switch (t.kind) {
-        case MenuKind::Step:    fields = kStepFields;    count = countOf(kStepFields); break;
-        case MenuKind::Track:   fields = kTrackFields;   count = countOf(kTrackFields); break;
-        case MenuKind::Pattern: fields = kPatternFields; count = countOf(kPatternFields); break;
+        case MenuKind::Step:    Popover::open(kStepFields, countOf(kStepFields), x, y, winW, winH); break;
+        case MenuKind::Track:   Popover::open(kTrackFields, countOf(kTrackFields), x, y, winW, winH); break;
+        case MenuKind::Pattern: Popover::open(kPatternFields, countOf(kPatternFields), x, y, winW, winH); break;
         case MenuKind::None:    close(); return;
     }
-    // Lay out each column top to bottom (relative to the panel), then place the panel inside the window.
-    int columns = 1;
-    float bottom[2] = {kTitleH + 4, kTitleH + 4};
-    for (int i = 0; i < count; ++i) {
-        const int c = std::clamp(fields[i].column, 0, 1);
-        columns = std::max(columns, c + 1);
-        const float h = rowHeight(fields[i].type);
-        rows_[i] = {c * kColW + kPad, bottom[c], kColW - 2 * kPad, h};
-        bottom[c] += h + 2;
-    }
-    const float w = columns * kColW, h = std::max(bottom[0], bottom[1]) + 8;
-    const float px = std::clamp(x, 4.0f, std::max(4.0f, winW - w - 4));
-    const float py = std::clamp(y, 4.0f, std::max(4.0f, winH - h - 4));
-    panel = {px, py, w, h};
-    title = {px + kPad, py + 4, w - 2 * kPad, kTitleH - 6};
-    for (int i = 0; i < count; ++i) {
-        rows_[i].x += px;
-        rows_[i].y += py;
-    }
-}
-
-Rect Menu::control(int i) const noexcept
-{
-    const Rect r = rows_[i];
-    const float keysW = fields[i].key == FieldKey::TrackNote ? kKeysW + 4 : 0;   // the keyboard button sits on the right
-    return {r.x + kLabelW, r.y, r.w - kLabelW - keysW, r.h};
-}
-Rect Menu::slider(int i) const noexcept { const Rect c = control(i); return {c.x, c.y, c.w - kNumberW - 6, c.h}; }
-Rect Menu::number(int i) const noexcept { const Rect c = control(i); return {c.right() - kNumberW, c.y + 2, kNumberW, c.h - 4}; }
-Rect Menu::keys(int i) const noexcept
-{
-    if (fields[i].key != FieldKey::TrackNote) return {};
-    const Rect r = rows_[i];
-    return {r.right() - kKeysW, r.y + 2, kKeysW, r.h - 4};
-}
-Rect Menu::textBox(int i) const noexcept { const Rect c = control(i); return {c.x, c.y + 2, c.w, c.h - 4}; }
-Rect Menu::prev(int i) const noexcept { const Rect c = control(i); return {c.x, c.y + 2, 22, c.h - 4}; }
-Rect Menu::next(int i) const noexcept { const Rect c = control(i); return {c.x + 100, c.y + 2, 22, c.h - 4}; }
-Rect Menu::check(int i) const noexcept { const Rect c = control(i); return {c.x, c.cy() - 8, 16, 16}; }
-Rect Menu::swatch(int i, int c) const noexcept
-{
-    const Rect r = control(i);
-    return {r.x + (c % 8) * kSwatchStep, r.y + 3 + (c / 8) * kSwatchStep, kSwatch, kSwatch};
-}
-
-MenuHit Menu::hitTest(float x, float y) const noexcept
-{
-    if (!isOpen() || !panel.contains(x, y)) return {};
-    for (int i = 0; i < count; ++i) {
-        if (!rows_[i].contains(x, y)) continue;
-        switch (fields[i].type) {
-            case FieldType::Range:
-                if (keys(i).contains(x, y)) return {MenuPart::Keys, i};
-                if (number(i).contains(x, y)) return {MenuPart::Number, i};
-                if (slider(i).contains(x, y)) return {MenuPart::Slider, i};
-                break;
-            case FieldType::Text:
-                if (textBox(i).contains(x, y)) return {MenuPart::Text, i};
-                break;
-            case FieldType::Color:
-                for (int c = 0; c < kPaletteSize; ++c)
-                    if (swatch(i, c).contains(x, y)) return {MenuPart::Swatch, i, c};
-                break;
-            case FieldType::Select:
-                if (prev(i).contains(x, y)) return {MenuPart::Prev, i};
-                if (next(i).contains(x, y) || control(i).contains(x, y)) return {MenuPart::Next, i};
-                break;
-            case FieldType::Check:  return {MenuPart::Check, i};    // the whole row toggles
-            case FieldType::Action: return {MenuPart::Action, i};
-        }
-        return {MenuPart::Panel, i};
-    }
-    return {MenuPart::Panel};
-}
-
-int Menu::sliderValueAt(int i, float x) const noexcept
-{
-    const Rect s = slider(i);
-    const FieldDef& f = fields[i];
-    const float x0 = s.x + 6, x1 = s.right() - 6;
-    const float u = x1 > x0 ? std::clamp((x - x0) / (x1 - x0), 0.0f, 1.0f) : 0.0f;
-    return f.min + static_cast<int>(std::lround(u * (f.max - f.min)));
 }
 
 // ---- model access ------------------------------------------------------------------------------------------------

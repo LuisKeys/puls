@@ -587,7 +587,7 @@ TEST(track_menu_has_a_keyboard_button_next_to_the_midi_note)
     int found = 0;
     for (int i = 0; i < menu.count; ++i) {
         const Rect k = menu.keys(i);
-        if (menu.fields[i].key != FieldKey::TrackNote) {
+        if (keyOf(menu.fields[i]) != FieldKey::TrackNote) {
             CHECK(k.w == 0);
             continue;
         }
