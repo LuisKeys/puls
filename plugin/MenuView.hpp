@@ -1,6 +1,7 @@
 #pragma once
 #include "Menu.hpp"
 #include "Paint.hpp"
+#include "vs/ui/GestureCounter.hpp"
 #include "TextEdit.hpp"
 #include <functional>
 #include <string>
@@ -17,7 +18,7 @@ public:
     using Send = std::function<void(const std::string&)>;
     using OpenKeys = std::function<void(uint32_t track)>;
 
-    MenuView(Send send, OpenKeys openKeys, uint32_t& gestureSeq)
+    MenuView(Send send, OpenKeys openKeys, vs::ui::GestureCounter& gestureSeq)
         : send_(std::move(send)), openKeys_(std::move(openKeys)), gestureSeq_(gestureSeq) {}
 
     bool isOpen() const noexcept { return menu_.isOpen(); }
@@ -55,7 +56,7 @@ private:
     puls::gui::TextEdit text_;
     Send                send_;
     OpenKeys            openKeys_;
-    uint32_t&           gestureSeq_;
+    vs::ui::GestureCounter& gestureSeq_;
     int                 editField_ = -1;
     int                 dragField_ = -1, dragValue_ = 0;
     bool                dragPending_ = false;

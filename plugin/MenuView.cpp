@@ -81,14 +81,14 @@ void MenuView::commitEdit(const puls::Model& m)
     const FieldDef& f = menu_.fields[i];
     if (f.type == FieldType::Text) {
         if (text_.text() != fieldText(m, menu_.target, keyOf(f)))
-            sendField(m, i, 0, text_.text(), ++gestureSeq_);
+            sendField(m, i, 0, text_.text(), gestureSeq_.next());
         return;
     }
     const std::string& s = text_.text();
     if (s.empty() || s == "-") return;   // nothing typed: keep the value
     const int v = std::clamp(static_cast<int>(std::strtol(s.c_str(), nullptr, 10)), f.min, f.max);
     if (v != fieldValue(m, menu_.target, keyOf(f)))
-        sendField(m, i, v, {}, ++gestureSeq_);
+        sendField(m, i, v, {}, gestureSeq_.next());
 }
 
 bool MenuView::mouseDown(float x, float y, const puls::Model& m)
@@ -108,7 +108,7 @@ bool MenuView::mouseDown(float x, float y, const puls::Model& m)
     switch (h.part) {
         case MenuPart::Slider:
             dragField_ = h.field;
-            dragGesture_ = ++gestureSeq_;
+            dragGesture_ = gestureSeq_.next();
             dragValue_ = snapValue(m, menu_.target, keyOf(f), menu_.sliderValueAt(h.field, x), 0);
             dragPending_ = dragValue_ != v;
             break;
@@ -117,16 +117,16 @@ bool MenuView::mouseDown(float x, float y, const puls::Model& m)
             beginEdit(m, h.field);
             break;
         case MenuPart::Swatch:
-            sendField(m, h.field, static_cast<int>(kPalette[h.sub]), {}, ++gestureSeq_);
+            sendField(m, h.field, static_cast<int>(kPalette[h.sub]), {}, gestureSeq_.next());
             break;
         case MenuPart::Prev:
         case MenuPart::Next: {
             const int nv = std::clamp(v + (h.part == MenuPart::Next ? 1 : -1), f.min, f.max);
-            if (nv != v) sendField(m, h.field, nv, {}, ++gestureSeq_);
+            if (nv != v) sendField(m, h.field, nv, {}, gestureSeq_.next());
             break;
         }
         case MenuPart::Check:
-            sendField(m, h.field, v ? 0 : 1, {}, ++gestureSeq_);
+            sendField(m, h.field, v ? 0 : 1, {}, gestureSeq_.next());
             break;
         case MenuPart::Action:
             if (fieldEnabled(m, menu_.target, keyOf(f))) {
@@ -184,7 +184,7 @@ bool MenuView::scroll(float x, float y, float dy, const puls::Model& m)
     if (nv == v) return true;
     if (wheelField_ != h.field) {   // consecutive wheel steps on one control are one undo step
         wheelField_ = h.field;
-        wheelGesture_ = ++gestureSeq_;
+        wheelGesture_ = gestureSeq_.next();
     }
     sendField(m, h.field, nv, {}, wheelGesture_);
     return true;

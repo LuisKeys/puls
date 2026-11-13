@@ -49,18 +49,6 @@ constexpr auto  kStatusTimeout = std::chrono::seconds(4);
 constexpr auto  kKeyMinDown = std::chrono::milliseconds(90);    // a quick click still shows the key going down
 constexpr auto  kKeyRelease = std::chrono::milliseconds(140);   // then it eases back up
 
-// a..b by t (0..1), per channel; colors are 0xRRGGBB.
-uint32_t mix(uint32_t a, uint32_t b, float t)
-{
-    uint32_t c = 0;
-    for (int sh = 0; sh <= 16; sh += 8)
-    {
-        const float x = ((a >> sh) & 255) + (static_cast<float>((b >> sh) & 255) - ((a >> sh) & 255)) * t;
-        c |= static_cast<uint32_t>(std::lround(x)) << sh;
-    }
-    return c;
-}
-
 } // namespace
 
 // Native NanoVG editor. Reads the Model directly (main thread) and sends Bridge commands through
@@ -633,7 +621,7 @@ private:
             return;
         const int v = std::clamp(static_cast<int>(std::strtol(s.c_str(), nullptr, 10)), 1, puls::kMaxSteps);
         if (v != t->length)
-            send(cmd::modifyTrack(id, {{"length", v}}, ++fGestureSeq));
+            send(cmd::modifyTrack(id, {{"length", v}}, fGestures.next()));
     }
 
     // ---------------------------------------------------------------------------------------------------------
@@ -746,7 +734,7 @@ private:
             note = std::clamp(note, 0, 127);
             fKeys.ensureVisible(note);
             // Always heard, whatever the ♪ setting; the same note again only plays it (no undo step).
-            send(cmd::modifyTrack(t->id, {{"note", note}}, ++fGestureSeq, true));
+            send(cmd::modifyTrack(t->id, {{"note", note}}, fGestures.next(), true));
         }
     }
 
@@ -1118,7 +1106,7 @@ private:
             {
                 fDrag = Drag::Swing;
                 fDragTrack = t->id;
-                fGesture = ++fGestureSeq;
+                fGesture = fGestures.next();
                 fSwingValue = swingAt(x);
             }
             break;
@@ -1162,7 +1150,7 @@ private:
                 fDragStartY = y;
                 fDragStartValue = t->length;
                 fLengthMoved = false;
-                fGesture = ++fGestureSeq;
+                fGesture = fGestures.next();
             }
             break;
         case Item::Cell:
@@ -1185,7 +1173,7 @@ private:
                 fDragging = false;
                 fDragVelocity = st.velocity;
                 fVelocityPending = false;
-                fGesture = ++fGestureSeq;
+                fGesture = fGestures.next();
             }
             break;
         case Item::HScrollbar:
@@ -1639,36 +1627,22 @@ private:
         button(fKeys.next, "\xE2\x80\xBA", fKeys.firstOctave < fKeys.maxFirstOctave(), false, hot(KeysPart::Next), 14.0f);   // ›
 
         // Keys: white ones, then black ones on top; the selected track's key is tinted with its color.
+        // A pressed key gets a little darker (white) or lighter (black) and shorter, with a shadow at the top.
         const float press = keyPress(Clock::now());
-        const int first = fKeys.firstOctave * 12, last = std::min(127, (fKeys.firstOctave + fKeys.octaves) * 12 - 1);
-        for (int pass = 0; pass < 2; ++pass)
-            for (int n = first; n <= last; ++n)
-            {
-                const bool black = puls::gui::isBlackKey(n);
-                if (black != (pass == 1))
-                    continue;
-                const Rect k = fKeys.key(n);
-                // A pressed key gets a little darker (white) or lighter (black) and shorter, with a shadow at the top.
-                const float down = n == fPressNote ? press : 0.0f;
-                const float sink = down * (black ? 1.5f : 2.0f);
-                const Rect in = black ? Rect{k.x, k.y, k.w, k.h - sink} : Rect{k.x + 0.5f, k.y, k.w - 1, k.h - sink};
-                const uint32_t up = black ? (hot(KeysPart::Key, n) ? 0x3a3e47 : 0x1a1c21) : (hot(KeysPart::Key, n) ? 0xffffff : 0xd9dbe0);
-                fillRect(in, mix(up, black ? 0x454a54 : 0xc3c6cd, down), 1.0f, 2.0f);
+        vs::ui::paint::drawPiano(
+            *this, fKeys,
+            [&](int n) {
+                vs::ui::paint::KeyStyle s;
+                s.hot = hot(KeysPart::Key, n);
+                s.press = n == fPressNote ? press : 0.0f;
                 if (sel != nullptr && sel->note == n)
-                    fillRect(in, sel->color, black ? 0.55f : 0.4f, 2.0f);
-                if (down > 0.0f)
                 {
-                    beginPath();
-                    rect(in.x, in.y, in.w, 8);
-                    fillPaint(linearGradient(in.x, in.y, in.x, in.y + 8, rgb(0x000000, 0.22f * down), rgb(0x000000, 0.0f)));
-                    fill();
+                    s.tint = sel->color;
+                    s.tintAlpha = puls::gui::isBlackKey(n) ? 0.55f : 0.4f;
                 }
-                if (black)
-                    strokeRect(in, 0x000000, 1.0f, 2.0f, 0.6f);
-                if (!black && n % 12 == 0)
-                    label({k.x, k.bottom() - 14, k.w, 12}, puls::gui::noteName(n).c_str(), 0x4a4f58, ALIGN_CENTER, 9.0f);
-                drawMarkers(n);
-            }
+                return s;
+            },
+            [&](int n, const Rect&) { drawMarkers(n); });
     }
 
     // Track dots on a key, the selected track first; a ring marks it. Stacks up to what fits on the key.
@@ -1855,7 +1829,8 @@ private:
     bool     fVelocityPending = false;
     int      fSwingValue = 0;
     float    fThumbStartScroll = 0;
-    uint32_t fGesture = 0, fGestureSeq = 0;   // one undo step per drag
+    uint32_t fGesture = 0;                    // one undo step per drag
+    vs::ui::GestureCounter fGestures;
     bool     fLengthMoved = false;
 
     // Typing a track length in the grid (a click on the length box without dragging).
@@ -1894,7 +1869,7 @@ private:
     std::string fTplId, fTplName, fTplLine1, fTplLine2, fTplOk;
 
     // Right-click popovers; shares the gesture counter so menu and grid edits never coalesce by accident.
-    MenuView fMenu{[this](const std::string& c) { send(c); }, [this](uint32_t track) { openKeys(track); }, fGestureSeq};
+    MenuView fMenu{[this](const std::string& c) { send(c); }, [this](uint32_t track) { openKeys(track); }, fGestures};
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PulsUI)
 };

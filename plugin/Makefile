@@ -10,6 +10,9 @@ DPF_BUILD_DIR = ../build/puls
 
 CLAP_BUNDLE = true
 UI_TYPE = opengl
+# X11 half of the window icon comes from vs-ui; the drum picture is WindowIcon.cpp. (No trailing comment on the
+# assignment line: make would keep the spaces in the value and the ifeq in plugin.mk would not match.)
+VS_WINDOW_ICON = true
 
 # Shared DPF settings (gnu++20, -fno-fast-math, include paths of the vs-* libraries, the `clap` target and `all`).
 include ../../vs-plugin-kit/mk/plugin.mk

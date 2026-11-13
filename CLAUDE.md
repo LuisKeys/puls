@@ -11,6 +11,9 @@ Polyrhythmic CLAP MIDI drum step sequencer (DPF + native DGL/NanoVG UI). Not a s
 6. One testable milestone at a time; run build + tests after each; record decisions in DECISIONS.md.
 7. Do not claim platform support until built and run there.
 
+## Shared libraries (ADR-023)
+Generic code lives in sibling repos next to `puls/`: `vs-rt` (SpscQueue, SnapshotExchange, MidiMsg), `vs-plugin-kit` (TestFramework, json.hpp, `mk/plugin.mk`) and `vs-ui` (Rect, TextEdit, PianoGeometry, Popover, Theme, Paint, PianoView, window icon). New generic code goes there, not here. Puls keeps only what is Puls-specific (sequencer, pattern model, bridge commands, the overlay panels). The CMake tests and `plugin/Makefile` locate them as siblings (`VS_ROOT` overrides).
+
 ## Build (macOS)
 `scripts/build.sh` — builds `plugin/` via DPF Makefile → `bin/puls.clap` (a bundle on macOS, a single file on Linux).
 `scripts/install-mac.sh` copies it to `~/Library/Audio/Plug-Ins/CLAP`. `scripts/validate.sh` runs clap-validator if present.
