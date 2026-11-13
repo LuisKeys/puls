@@ -1,16 +1,10 @@
 #pragma once
+#include "vs/ui/Rect.hpp"
 #include <cstdint>
 
 namespace puls::gui {
 
-struct Rect {
-    float x = 0, y = 0, w = 0, h = 0;
-    bool  contains(float px, float py) const noexcept { return w > 0 && px >= x && px < x + w && py >= y && py < y + h; }
-    float right() const noexcept { return x + w; }
-    float bottom() const noexcept { return y + h; }
-    float cx() const noexcept { return x + w * 0.5f; }
-    float cy() const noexcept { return y + h * 0.5f; }
-};
+using vs::ui::Rect;   // moved to vs-ui
 
 enum class Item : uint8_t {
     None,

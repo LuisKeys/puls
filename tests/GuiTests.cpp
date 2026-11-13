@@ -503,7 +503,7 @@ TEST(keyboard_fits_the_minimum_window_with_sixteen_tracks)
     CHECK(k.panel.x >= 0 && k.panel.right() <= EditorLayout::kMinWidth);
     CHECK(k.panel.y >= 0 && k.panel.bottom() <= EditorLayout::kMinHeight);
     CHECK(k.octaves >= 3);
-    CHECK(k.keys.h >= 60);
+    CHECK(k.area.h >= 60);
     CHECK(k.chip(kMaxTracks - 1).bottom() <= k.info.y);
     CHECK(k.chip(KeyboardLayout::kChipsPerRow - 1).right() <= k.panel.right());
     for (int t = 0; t < kMaxTracks; ++t) {
@@ -533,7 +533,7 @@ TEST(every_visible_key_hits_itself_and_black_keys_lie_on_top)
                 const Rect r = k.key(n);
                 if (r.w <= 0) continue;
                 ++shown;
-                CHECK(r.x >= k.keys.x - 0.01f && r.right() <= k.keys.right() + 0.01f);
+                CHECK(r.x >= k.area.x - 0.01f && r.right() <= k.area.right() + 0.01f);
                 // White keys are hit below the black ones; black keys anywhere.
                 const float y = isBlackKey(n) ? r.cy() : r.bottom() - 4;
                 const KeysHit h = k.hitTest(r.cx(), y);
