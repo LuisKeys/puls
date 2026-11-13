@@ -7,12 +7,20 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 enable_testing()
 
+# The shared vs-* libraries live next to this project (override VS_ROOT if yours are elsewhere).
+get_filename_component(VS_ROOT_DEFAULT ${CMAKE_CURRENT_SOURCE_DIR}/../.. ABSOLUTE)
+set(VS_ROOT ${VS_ROOT_DEFAULT} CACHE PATH "Directory that holds vs-rt, vs-plugin-kit and vs-ui")
+add_subdirectory(${VS_ROOT}/vs-rt vs-rt EXCLUDE_FROM_ALL)
+add_subdirectory(${VS_ROOT}/vs-plugin-kit vs-plugin-kit EXCLUDE_FROM_ALL)
+add_subdirectory(${VS_ROOT}/vs-ui vs-ui EXCLUDE_FROM_ALL)
+
 add_library(puls_engine STATIC ../engine/Sequencer.cpp)
 target_include_directories(puls_engine PUBLIC ../engine)
+target_link_libraries(puls_engine PUBLIC vs::rt)
 target_compile_options(puls_engine PRIVATE -Wall -Wextra -Wno-unused-parameter)
 
 add_executable(engine_tests EngineTests.cpp)
-target_link_libraries(engine_tests puls_engine)
+target_link_libraries(engine_tests puls_engine vs::plugin_kit)
 target_compile_options(engine_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
 add_test(NAME engine COMMAND engine_tests)
 
@@ -23,8 +31,8 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/Templates.inc
   DEPENDS ${PULS_TEMPLATES} ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/embed-templates.sh)
 
 add_library(puls_app STATIC ../state/Serialization.cpp ../state/Templates.cpp ../bridge/Bridge.cpp ${CMAKE_CURRENT_BINARY_DIR}/Templates.inc)
-target_include_directories(puls_app PUBLIC ../model ../state ../bridge ../third_party ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(puls_app PUBLIC puls_engine)
+target_include_directories(puls_app PUBLIC ../model ../state ../bridge ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(puls_app PUBLIC puls_engine vs::plugin_kit)   # vs::plugin_kit provides json.hpp and TestFramework
 target_compile_options(puls_app PRIVATE -Wall -Wextra -Wno-unused-parameter)
 
 add_executable(bridge_tests BridgeTests.cpp)

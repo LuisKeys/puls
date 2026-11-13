@@ -11,25 +11,13 @@ DPF_BUILD_DIR = ../build/puls
 CLAP_BUNDLE = true
 UI_TYPE = opengl
 
-include $(DPF_PATH)/Makefile.plugins.mk
+# Shared DPF settings (gnu++20, -fno-fast-math, include paths of the vs-* libraries, the `clap` target and `all`).
+include ../../vs-plugin-kit/mk/plugin.mk
 
-BUILD_CXX_FLAGS += -I../engine -I../model -I../state -I../bridge -I../gui -I../third_party -I. -I$(BUILD_DIR)
-# DPF's Linux code uses GNU typeof, so Linux needs gnu++20.
-ifeq ($(LINUX),true)
-BUILD_CXX_FLAGS += -std=gnu++20
-else
-BUILD_CXX_FLAGS += -std=c++20
-endif
-# DPF builds with -ffast-math, which would drop the engine's isfinite() guards and break json.hpp's infinity handling.
-BUILD_CXX_FLAGS += -fno-fast-math
-BUILD_CXX_FLAGS += -Wno-unused-parameter -Wno-deprecated-declarations
-
-TARGETS += clap
+BUILD_CXX_FLAGS += -I../engine -I../model -I../state -I../bridge -I../gui -I. -I$(BUILD_DIR)
 
 # Built-in templates: every templates/*.json, embedded as string literals (see state/Templates.cpp).
 TEMPLATE_FILES = $(sort $(wildcard ../templates/*.json))
 $(BUILD_DIR)/Templates.inc: $(TEMPLATE_FILES) ../scripts/embed-templates.sh
 	@sh ../scripts/embed-templates.sh $@ $(TEMPLATE_FILES)
 $(BUILD_DIR)/../state/Templates.cpp.o: $(BUILD_DIR)/Templates.inc
-
-all: $(TARGETS)

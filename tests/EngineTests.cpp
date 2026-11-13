@@ -1,4 +1,4 @@
-#include "TestFramework.hpp"
+#include "vs/TestFramework.hpp"
 #include "TestHelpers.hpp"
 #include "Auditioner.hpp"
 #include "PatternSwitcher.hpp"
@@ -502,17 +502,6 @@ TEST(switcher_plans_targets_cancels_and_recovers_from_jumps)
     sw.plan(false, 0.0, 4.0);                                           // stopped: applied immediately
     CHECK(!sw.pending()); CHECK_EQ(sw.current(), 2);
     sw.request({1, SwitchQuantize::Bar}); sw.plan(false, 0.0, 4.0); CHECK_EQ(sw.current(), 1);
-}
-
-TEST(spsc_queue_preserves_order_and_reports_full)
-{
-    SpscQueue<int, 4> q; int v;
-    CHECK(!q.pop(v));
-    for (int i = 0; i < 4; ++i) CHECK(q.push(i));
-    CHECK(!q.push(99));
-    for (int i = 0; i < 4; ++i) { CHECK(q.pop(v)); CHECK_EQ(v, i); }
-    CHECK(!q.pop(v));
-    for (int i = 0; i < 10; ++i) { CHECK(q.push(i)); CHECK(q.pop(v)); CHECK_EQ(v, i); } // wraps
 }
 
 // ---- Phase 5: hardening ----
